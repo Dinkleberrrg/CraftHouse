@@ -120,7 +120,7 @@ end
 local menu
 local MENU_MAX = 24
 
-local function Menu(anchor, items, onSelect)
+local function Menu(anchor, items, onSelect, keep)
   if not menu then
     menu = CreateFrame("Frame", "CraftHouseMenu", UIParent)
     menu:SetFrameStrata("FULLSCREEN_DIALOG")
@@ -144,7 +144,11 @@ local function Menu(anchor, items, onSelect)
       menu.buttons[i] = b
     end
   end
-  if menu:IsShown() and menu.anchor == anchor then menu:Hide(); return end
+  if menu:IsShown() and menu.anchor == anchor and not keep then menu:Hide(); return end
+  if table.getn(items) == 0 then
+    if menu.anchor == anchor then menu:Hide() end
+    return
+  end
   menu.anchor = anchor
   menu.onSelect = onSelect
   local width = 120
@@ -241,19 +245,26 @@ local function Matches(rec, ignoreCat)
   return true
 end
 
+-- view.sort: "level" (view.asc = lowest first), "name", "stat", "diff"
+-- (skill-up colour). Level and colour are separate sort keys.
 local function Sorter(a, b)
-  if view.sort == "name" then return a.n < b.n end
-  if view.skill then
+  if view.sort == "name" then
+    if a.n ~= b.n then return a.n < b.n end
+    return (a.owner or "") < (b.owner or "")
+  end
+  if view.sort == "diff" then
     local da, db = DIFFORDER[a.d] or 0, DIFFORDER[b.d] or 0
     if da ~= db then return da > db end
-    if (a.l or 0) ~= (b.l or 0) then return (a.l or 0) < (b.l or 0) end
-    return a.n < b.n
   end
   if view.sort == "stat" and view.stat then
     local va, vb = (a.t and a.t[view.stat]) or 0, (b.t and b.t[view.stat]) or 0
     if va ~= vb then return va > vb end
   end
-  if (a.l or 0) ~= (b.l or 0) then return (a.l or 0) > (b.l or 0) end
+  local la, lb = a.l or 0, b.l or 0
+  if la ~= lb then
+    if view.asc then return la < lb end
+    return la > lb
+  end
   if (a.q or 1) ~= (b.q or 1) then return (a.q or 1) > (b.q or 1) end
   if a.n ~= b.n then return a.n < b.n end
   return (a.owner or "") < (b.owner or "")
@@ -467,7 +478,8 @@ local function CurrentList()
   end
   if L and L.kind == "in" then
     local l = CH.lists.inc[L.name]
-    if l then return l.items, CH.me, "in", L.name end
+    if l and table.getn(l.items) > 0 then return l.items, CH.me, "in", L.name end
+    CH.lists.inc[L.name] = nil
     view.list = nil
   end
   return CH.queue, CH.me, "me"
@@ -494,15 +506,15 @@ local function UpdateQueue()
 
   if kind == "me" then
     q.listBtn:SetText("My queue")
-    q.b1:SetText("Craft next"); q.b2:Show()
+    q.b1:SetText("Craft next"); q.b2:Show(); q.b3:SetText("Clear")
     q.mtitle:SetText("Still missing for the queue")
   elseif kind == "out" then
     q.listBtn:SetText("For " .. who)
-    q.b1:SetText("Send list"); q.b2:Hide()
+    q.b1:SetText("Send list"); q.b2:Hide(); q.b3:SetText("Delete")
     q.mtitle:SetText("Reagents " .. who .. " needs")
   else
     q.listBtn:SetText("From " .. who)
-    q.b1:SetText("Take over"); q.b2:Hide()
+    q.b1:SetText("Take over"); q.b2:Hide(); q.b3:SetText("Delete")
     q.mtitle:SetText("Still missing for this list")
   end
 
@@ -708,6 +720,7 @@ function CH.IsShown() return main and main:IsShown() end
 local function ResetFilters()
   view.search, view.lmin, view.lmax, view.q = "", nil, nil, 0
   view.stat, view.statMin, view.cat, view.mats, view.skill = nil, 1, "All", false, false
+  view.sort, view.asc = "level", nil
   ui.search:SetText(""); ui.lmin:SetText(""); ui.lmax:SetText("")
   ui.statMin:SetText("")
   ui.mats:SetChecked(nil); ui.skill:SetChecked(nil)
@@ -774,14 +787,6 @@ local function Build()
         view.list = nil
       end
       CH.watching = (kind == "other") and name or nil
-      if kind == "other" and CH.others[name] and CH.others[name].route ~= "WHISPER" then
-        CH.RequestUpdate(name)
-      end
-      if kind == "all" then
-        for oname, o in pairs(CH.others) do
-          if o.route and o.route ~= "WHISPER" and CH.IsOutdated(oname) then CH.RequestUpdate(oname) end
-        end
-      end
       CH.Refresh()
     end)
   end)
@@ -868,8 +873,12 @@ local function Build()
 
   ui.mats = Check(main, "Have mats", 612, -62, function(on) view.mats = on; CH.Refresh() end)
   Tip(ui.mats, "Only recipes you can craft right now from your bags.")
-  ui.skill = Check(main, "Skill-up", 696, -62, function(on) view.skill = on; CH.Refresh() end)
-  Tip(ui.skill, "Leveling mode: hides grey recipes and sorts orange > yellow > green.")
+  ui.skill = Check(main, "Skill-up", 696, -62, function(on)
+    view.skill = on
+    if on then view.sort = "diff" elseif view.sort == "diff" then view.sort = "level" end
+    CH.Refresh()
+  end)
+  Tip(ui.skill, "Leveling mode: hides grey recipes and sorts orange > yellow > green. Click Lvl to sort by level instead.")
   Button(main, "Reset", 770, -63, 52, 22, function() ResetFilters(); CH.Refresh() end)
 
   -- Left: categories
@@ -894,8 +903,11 @@ local function Build()
   local list = Panel(main, 132, -92, 452, 22 + ROWS * ROWH + 8)
   ui.list = list
   local hName = Button(list, "Name", 30, -3, 60, 18, function() view.sort = "name"; CH.Refresh() end)
-  local hLvl = Button(list, "Lvl", 210, -3, 32, 18, function() view.sort = "level"; CH.Refresh() end)
-  Tip(hName, "Sort by name"); Tip(hLvl, "Sort by required level")
+  local hLvl = Button(list, "Lvl", 210, -3, 32, 18, function()
+    if view.sort == "level" then view.asc = not view.asc else view.sort = "level" end
+    CH.Refresh()
+  end)
+  Tip(hName, "Sort by name"); Tip(hLvl, "Sort by required level (click again: reverse)")
   local hStats = Text(list, "GameFontNormalSmall", 246, -6); hStats:SetText("Stats")
   local hHave = Text(list, "GameFontNormalSmall", 396, -6, 50, "RIGHT"); hHave:SetText("Can")
   ui.count = Text(list, "GameFontDisableSmall", 96, -6)
@@ -945,7 +957,9 @@ local function Build()
   q.listBtn = Button(q, "My queue", 6, -5, 150, 20, function()
     local items = { { text = "My queue", value = "", checked = view.list == nil } }
     local names = {}
-    for name in pairs(CH.lists.inc) do table.insert(names, name) end
+    for name, l in pairs(CH.lists.inc) do
+      if table.getn(l.items) > 0 then table.insert(names, name) else CH.lists.inc[name] = nil end
+    end
     table.sort(names)
     for _, name in ipairs(names) do
       local l = CH.lists.inc[name]
@@ -1030,7 +1044,7 @@ local function Build()
     CH.SendList(ui.shareName:GetText(), CH.queue)
   end)
   Tip(q.b2, "Send your queue as a to-do list to the player named under 'Share with player'.")
-  Button(q, "Clear", 172, -222, 56, 22, function()
+  q.b3 = Button(q, "Clear", 172, -222, 56, 22, function()
     local _, _, kind, who = CurrentList()
     if kind == "me" then
       for i = table.getn(CH.queue), 1, -1 do table.remove(CH.queue, i) end
@@ -1051,7 +1065,33 @@ local function Build()
   -- Right: sharing
   local s = Panel(main, 588, -426, 236, 66)
   local st = Text(s, "GameFontNormalSmall", 8, -6); st:SetText("Share with player")
-  ui.shareName = EditBox(s, 8, -20, 100)
+  ui.shareName = EditBox(s, 8, -20, 80)
+  local function Suggest(anchor, prefix, keep)
+    local items = {}
+    for _, x in ipairs(CH.NameSuggestions(prefix)) do
+      if table.getn(items) >= 20 then break end
+      table.insert(items, { text = x.name .. "  |cff888888" .. x.tag .. "|r", value = x.name })
+    end
+    Menu(anchor, items, function(name)
+      ui.shareName.filling = true
+      ui.shareName:SetText(name)
+      ui.shareName.filling = nil
+      ui.shareName:ClearFocus()
+    end, keep)
+  end
+  ui.shareName:SetScript("OnEditFocusGained", function() this.focused = true end)
+  ui.shareName:SetScript("OnEditFocusLost", function() this.focused = nil end)
+  ui.shareName:SetScript("OnTextChanged", function()
+    if this.filling or not this.focused then return end
+    local t = this:GetText() or ""
+    if t == "" then
+      if menu and menu.anchor == this then menu:Hide() end
+    else
+      Suggest(this, t, true)
+    end
+  end)
+  local pick = Button(s, "v", 89, -19, 20, 22, function() Suggest(this, "") end)
+  Tip(pick, "Pick a name: group, recent whispers, friends, your alts, players who shared with you.")
   ui.shareName:SetScript("OnEnterPressed", function()
     this:ClearFocus(); CH.ShareMenu(this)
   end)
@@ -1185,6 +1225,15 @@ function CH.ShareMenu(anchor)
   share:ClearAllPoints()
   share:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 4)
   share:Show()
+end
+
+-- A sent to-do list is done: remove the draft for that player
+function CH.OnListSent(name, list)
+  if CH.lists.out[name] == list then
+    CH.lists.out[name] = nil
+    if view.list and view.list.kind == "out" and view.list.name == name then view.list = nil end
+  end
+  CH.Refresh()
 end
 
 function CH.OnForget(name)
