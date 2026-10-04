@@ -189,6 +189,34 @@ A.execute('SENT = {}; CraftHouse.SendKeyTo("Bob")')
 pump(80)
 check(B.eval('CraftHouse.others.Henry.profs.Tailoring.count') == 124, "124 recipes arrive in chunks")
 
+# to-do list: Bob builds a list from Henry's recipes and sends it
+B.execute('''CraftHouse.Show("Henry"); CraftHouse.view.stat = nil; CraftHouse.Refresh()
+local robe
+for _, r in ipairs(CraftHouse.others.Henry.profs.Tailoring.recipes) do if r.n == "Mystic Robe" then robe = r end end
+robe.prof = "Tailoring"
+CraftHouse.AddToList(robe, 2)
+for i = 1, 40 do
+  local r = CraftHouse.others.Henry.profs.Tailoring.recipes[i + 4]
+  r.prof = "Tailoring"
+  CraftHouse.AddToList(r, 1)
+end
+local list, _, kind, who = CraftHouse.CurrentList()
+LKIND, LWHO, LN = kind, who, table.getn(list)
+SENT = {}
+CraftHouse.SendList(who, list)''')
+check(B.eval('LKIND') == 'out' and B.eval('LWHO') == 'Henry' and B.eval('LN') == 41, "Bob's to-do list for Henry has 41 entries")
+pump(30)
+inc = A.eval('CraftHouse.lists.inc.Bob')
+check(inc is not None and len(list(inc['items'].values())) == 41, "Henry received Bob's to-do list (41)")
+A.execute('QBEFORE = table.getn(CraftHouse.queue); MOVED = CraftHouse.TakeOver("Bob")')
+check(A.eval('MOVED') == 41 and A.eval('CraftHouse.lists.inc.Bob') is None, "take over moves all known recipes to the queue")
+A.execute('ROBEQ = 0 for _, e in ipairs(CraftHouse.queue) do if e.name == "Mystic Robe" then ROBEQ = e.count end end')
+check(A.eval('ROBEQ') == 4, "robe count merged into existing queue entry (2 + 2)")
+# Henry views the UI with an incoming list containing an unknown recipe
+A.execute('CraftHouse.lists.inc.Bob = { time = time(), items = { {prof="Tailoring", name="Mystic Robe", count=1}, {prof="Alchemy", name="Unknown Potion", count=3} } }')
+A.execute('CraftHouse.view.list = { kind = "in", name = "Bob" }; CraftHouse.Refresh(); MOVED = CraftHouse.TakeOver("Bob")')
+check(A.eval('MOVED') == 1 and len(list(A.eval('CraftHouse.lists.inc.Bob.items').values())) == 1, "unknown recipes stay in the received list")
+
 # guild route
 A.execute('GUILD = {"Henry", "Bob"}')
 B.execute('GUILD = {"Henry", "Bob"}')
