@@ -209,6 +209,13 @@ end
 
 local DIFFORDER = { optimal = 4, medium = 3, easy = 2, trivial = 1 }
 
+-- Used on the profession tabs when the full names do not fit
+local SHORTPROF = {
+  ["Leatherworking"] = "Leather", ["Blacksmithing"] = "Smithing",
+  ["Engineering"] = "Engineer", ["Enchanting"] = "Enchant",
+  ["Jewelcrafting"] = "Jewelcraft", ["First Aid"] = "First Aid",
+}
+
 local function Matches(rec)
   if view.search ~= "" and not strfind(strlower(rec.n), view.search, 1, true) then return end
   local lvl = rec.l or 0
@@ -299,13 +306,13 @@ local function CreateRows(parent)
     r.diff:SetTexture(1, 1, 1, 1)
     r.name = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     r.name:SetPoint("LEFT", r, "LEFT", 30, 0)
-    r.name:SetWidth(180); r.name:SetJustifyH("LEFT")
+    r.name:SetWidth(180); r.name:SetHeight(ROWH); r.name:SetJustifyH("LEFT")
     r.lvl = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     r.lvl:SetPoint("LEFT", r, "LEFT", 212, 0)
     r.lvl:SetWidth(26); r.lvl:SetJustifyH("CENTER")
     r.stats = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     r.stats:SetPoint("LEFT", r, "LEFT", 242, 0)
-    r.stats:SetWidth(150); r.stats:SetJustifyH("LEFT")
+    r.stats:SetWidth(150); r.stats:SetHeight(ROWH); r.stats:SetJustifyH("LEFT")
     r.stats:SetTextColor(0.6, 1, 0.6)
     r.avail = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     r.avail:SetPoint("RIGHT", r, "RIGHT", -2, 0)
@@ -394,6 +401,11 @@ local function UpdateDetails()
       table.insert(lines, r[2] .. "x " .. name)
     end
   end
+  if table.getn(lines) > 5 then
+    local more = table.getn(lines) - 4
+    while table.getn(lines) > 4 do table.remove(lines) end
+    table.insert(lines, "|cff888888+" .. more .. " more|r")
+  end
   d.reag:SetText(table.concat(lines, "\n"))
   if mine then
     d.craft:Show(); d.all:Show(); d.queue:Show(); d.num:Show(); d.ask:Hide()
@@ -403,7 +415,7 @@ local function UpdateDetails()
     if CH.openProf == rec.prof then d.craft:SetText("Craft") else d.craft:SetText("Open + Craft") end
   else
     d.craft:Hide(); d.all:Hide(); d.queue:Show(); d.num:Show(); d.ask:Show()
-    d.queue:SetText("+ To-do for " .. view.src)
+    d.queue:SetText("+ To-do list")
   end
 end
 
@@ -449,7 +461,7 @@ local function UpdateQueue()
     q.mtitle:SetText("Still missing for the queue")
   elseif kind == "out" then
     q.listBtn:SetText("For " .. who)
-    q.b1:SetText("Send to " .. who); q.b2:Hide()
+    q.b1:SetText("Send list"); q.b2:Hide()
     q.mtitle:SetText("Reagents " .. who .. " needs")
   else
     q.listBtn:SetText("From " .. who)
@@ -501,9 +513,9 @@ local function UpdateQueue()
     end
   end
   if table.getn(lines) == 0 and n > 0 and kind ~= "out" then lines[1] = "|cff20ff20All reagents in bags.|r" end
-  if table.getn(lines) > 8 then
-    local more = table.getn(lines) - 7
-    while table.getn(lines) > 7 do table.remove(lines) end
+  if table.getn(lines) > 4 then
+    local more = table.getn(lines) - 3
+    while table.getn(lines) > 3 do table.remove(lines) end
     table.insert(lines, "|cff888888+" .. more .. " more|r")
   end
   q.missing:SetText(table.concat(lines, "\n"))
@@ -527,14 +539,39 @@ local function UpdateHeader()
   table.sort(profs)
   if view.prof ~= "All" and not (data and data.profs and data.profs[view.prof]) then view.prof = "All" end
 
+  -- Tabs are sized to their text; if they do not fit, shorter labels
+  local function Label(prof, style)
+    if prof == "All" then return "All" end
+    local p = data.profs[prof]
+    local n = (style > 1) and (SHORTPROF[prof] or prof) or prof
+    if style > 2 then return n end
+    return n .. " |cffaaaaaa" .. (p.rank or "?") .. "|r"
+  end
+  local avail = W - 18 - 156
+  for style = 1, 3 do
+    local total = 0
+    for i = 1, MAXPROFS + 1 do
+      local b = ui.profBtns[i]
+      local prof = (i == 1) and "All" or profs[i - 1]
+      b.prof = prof
+      if prof then
+        b:SetText(Label(prof, style))
+        local fs = getglobal(b:GetName() .. "Text")
+        b.w = math.max(44, math.floor(fs:GetStringWidth() + 22))
+        total = total + b.w + 2
+      end
+    end
+    if total <= avail then break end
+  end
+  local x = 156
   for i = 1, MAXPROFS + 1 do
     local b = ui.profBtns[i]
-    local prof = (i == 1) and "All" or profs[i - 1]
-    b.prof = prof
-    if prof then
-      local p = data.profs[prof]
-      b:SetText(prof == "All" and "All" or (prof .. " " .. (p.rank or "?")))
-      if view.prof == prof then b:LockHighlight() else b:UnlockHighlight() end
+    if b.prof then
+      b:SetWidth(b.w)
+      b:ClearAllPoints()
+      b:SetPoint("TOPLEFT", main, "TOPLEFT", x, -36)
+      x = x + b.w + 2
+      if view.prof == b.prof then b:LockHighlight() else b:UnlockHighlight() end
       b:Show()
     else
       b:Hide()
@@ -547,7 +584,9 @@ local function UpdateHeader()
     info = "Shared " .. CH.Ago(data.time or data.keytime) .. " ago"
     if CH.IsOutdated(name) then info = info .. "  |cffffd100(newer key, click Update)|r" end
     ui.update:Show()
+    ui.forget:Show()
   else
+    if kind == "alt" then ui.forget:Show() else ui.forget:Hide() end
     if kind == "me" and CH.openProf then
       info = "|cff20ff20" .. CH.openProf .. " open|r"
     elseif kind == "me" and CH.Count(CH.me.profs) == 0 then
@@ -673,6 +712,16 @@ local function Build()
       view.sel = nil
       CH.Refresh()
     end)
+    b:SetScript("OnEnter", function()
+      local data = SrcData()
+      local p = this.prof and data and data.profs and data.profs[this.prof]
+      if not p then return end
+      GameTooltip:SetOwner(this, "ANCHOR_BOTTOM")
+      GameTooltip:SetText(this.prof .. "  " .. (p.rank or "?") .. "/" .. (p.max or "?"), 1, 1, 1)
+      GameTooltip:AddLine(table.getn(p.recipes or {}) .. " recipes", 0.7, 0.7, 0.7)
+      GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
     ui.profBtns[i] = b
   end
 
@@ -788,6 +837,7 @@ local function Build()
   d.icon:SetWidth(28); d.icon:SetHeight(28)
   d.icon:SetPoint("TOPLEFT", d, "TOPLEFT", 6, -6)
   d.title = Text(d, "GameFontHighlight", 40, -8, 400)
+  d.title:SetHeight(16)
   d.reag = Text(d, "GameFontHighlightSmall", 40, -26, 250)
   d.num = EditBox(d, 300, -26, 34, true)
   d.num:SetText("1")
@@ -849,7 +899,7 @@ local function Build()
     row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
     row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.text:SetPoint("LEFT", row, "LEFT", 2, 0)
-    row.text:SetWidth(200); row.text:SetJustifyH("LEFT")
+    row.text:SetWidth(200); row.text:SetHeight(16); row.text:SetJustifyH("LEFT")
     row:SetScript("OnClick", function()
       if not this.entry then return end
       local _, data, kind, who = CurrentList()
@@ -947,6 +997,20 @@ local function Build()
   Tip(ui.update, "Ask this player for their latest recipes (they must be online). Shift-click reloads everything.")
   ui.update:Hide()
 
+  StaticPopupDialogs["CRAFTHOUSE_FORGET"] = {
+    text = "Delete the saved recipes of %s?",
+    button1 = YES, button2 = NO,
+    OnAccept = function() CH.Forget(CH.forgetName) end,
+    timeout = 0, whileDead = 1, hideOnEscape = 1,
+  }
+  ui.forget = Button(main, "Delete", 654, -496, 82, 20, function()
+    if not view.src or view.src == CH.player then return end
+    CH.forgetName = view.src
+    StaticPopup_Show("CRAFTHOUSE_FORGET", view.src)
+  end)
+  Tip(ui.forget, "Delete this player's saved recipes from CraftHouse. Alts come back when you log in and open their professions.")
+  ui.forget:Hide()
+
   -- Mouse wheel + Ctrl scales the window
   main:EnableMouseWheel(true)
   main:SetScript("OnMouseWheel", function()
@@ -977,6 +1041,14 @@ end
 
 function CH.OnScanned(prof)
   if CH.OnRecipesChanged then CH.OnRecipesChanged() end
+end
+
+function CH.OnForget(name)
+  if view.src == name then
+    view.src, view.sel, view.prof = nil, nil, "All"
+    if view.list and view.list.kind == "out" then view.list = nil end
+  end
+  CH.Refresh()
 end
 
 function CH.OnListReceived(from)

@@ -21,7 +21,7 @@
 CraftHouse = {}
 local CH = CraftHouse
 
-CH.version  = "1.1.0"
+CH.version  = "1.2.0"
 CH.prefix   = "CraftHouse"
 CH.realm    = nil
 CH.player   = nil
@@ -203,6 +203,20 @@ function CH.Sources()
   return list
 end
 
+-- Deletes the saved recipes of an alt or another player
+function CH.Forget(name)
+  if not name or name == CH.player then return end
+  local found
+  if CH.db.chars[CH.realm][name] then CH.db.chars[CH.realm][name] = nil; found = true end
+  if CH.others[name] then CH.others[name] = nil; found = true end
+  if found then
+    CH.Print("Deleted the saved recipes of " .. name .. ".")
+  else
+    CH.Print("No saved recipes for " .. name .. ".")
+  end
+  if CH.OnForget then CH.OnForget(name) end
+end
+
 function CH.SourceData(name)
   if not name or name == CH.player then return CH.me, "me" end
   local c = CH.db.chars[CH.realm][name]
@@ -284,9 +298,7 @@ SlashCmdList["CRAFTHOUSE"] = function(msg)
     CH.db.settings.autoopen = (CH.db.settings.autoopen == 1) and 0 or 1
     CH.Print("Open with profession window: " .. (CH.db.settings.autoopen == 1 and "on" or "off"))
   elseif cmd == "forget" and rest ~= "" then
-    CH.others[rest] = nil
-    CH.Print("Forgot " .. rest .. ".")
-    if CH.Refresh then CH.Refresh() end
+    CH.Forget(strupper(strsub(rest, 1, 1)) .. strlower(strsub(rest, 2)))
   elseif cmd == "reset" then
     CH.db.pos = nil
     CH.db.scale = nil
