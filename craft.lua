@@ -183,16 +183,18 @@ end)
 -- Queue (to-do list)
 --------------------------------------------------------------------------
 
-function CH.QueueAdd(rec, count)
+-- list defaults to the own queue; also used for lists for/from others
+function CH.QueueAdd(rec, count, list)
+  list = list or CH.queue
   count = count or 1
-  for _, e in ipairs(CH.queue) do
+  for _, e in ipairs(list) do
     if e.prof == rec.prof and e.name == rec.n then
       e.count = e.count + count
       if CH.IsShown() then CH.Refresh() end
       return
     end
   end
-  table.insert(CH.queue, { prof = rec.prof, name = rec.n, count = count })
+  table.insert(list, { prof = rec.prof, name = rec.n, count = count })
   if CH.IsShown() then CH.Refresh() end
 end
 
@@ -206,13 +208,14 @@ function CH.QueueDone(entry, n)
   end
 end
 
-function CH.QueueRemove(i)
-  table.remove(CH.queue, i)
+function CH.QueueRemove(i, list)
+  table.remove(list or CH.queue, i)
   if CH.IsShown() then CH.Refresh() end
 end
 
-function CH.QueueRecipe(e)
-  local p = CH.me.profs[e.prof]
+-- data = whose recipes (default: own)
+function CH.QueueRecipe(e, data)
+  local p = (data or CH.me).profs[e.prof]
   if not p then return end
   for _, r in ipairs(p.recipes) do
     if r.n == e.name then
@@ -223,10 +226,10 @@ function CH.QueueRecipe(e)
 end
 
 -- Total reagents the whole queue needs: list of {id, name, need, have}
-function CH.QueueReagents()
+function CH.QueueReagents(list, data)
   local need, order = {}, {}
-  for _, e in ipairs(CH.queue) do
-    local rec = CH.QueueRecipe(e)
+  for _, e in ipairs(list or CH.queue) do
+    local rec = CH.QueueRecipe(e, data)
     if rec then
       local times = e.count
       for _, r in ipairs(rec.r) do
@@ -269,4 +272,37 @@ function CH.QueueNext()
   else
     CH.Print("Nothing in the queue can be crafted with what is in your bags.")
   end
+end
+
+--------------------------------------------------------------------------
+-- To-do lists for and from other players
+--   CH.lists.out[name] = { entries }          list I build for name
+--   CH.lists.inc[name] = { time, items = { entries } }   list name sent me
+--------------------------------------------------------------------------
+
+function CH.OutList(name)
+  if not CH.lists.out[name] then CH.lists.out[name] = {} end
+  return CH.lists.out[name]
+end
+
+-- Moves every recipe I know from a received list into my queue.
+-- Returns how many entries were moved.
+function CH.TakeOver(name)
+  local l = CH.lists.inc[name]
+  if not l then return 0 end
+  local moved, i = 0, 1
+  while i <= table.getn(l.items) do
+    local e = l.items[i]
+    local rec = CH.QueueRecipe(e)
+    if rec then
+      CH.QueueAdd(rec, e.count)
+      table.remove(l.items, i)
+      moved = moved + 1
+    else
+      i = i + 1
+    end
+  end
+  if table.getn(l.items) == 0 then CH.lists.inc[name] = nil end
+  if CH.IsShown() then CH.Refresh() end
+  return moved
 end

@@ -9,6 +9,7 @@ Profession browser for WoW 1.12 (OctoWoW / Turtle-like servers), in the style of
 - **Craft from anywhere:** "Craft" also works when the profession window is closed. CraftHouse opens it first, then crafts.
 - **Queue (to-do list):** right-click a recipe (or use "+ Queue") to add it. The queue shows which reagents are still missing, and "Craft next" works through it.
 - **Share recipes:** "Send" sends your recipe *key* to a player. The key is a short summary (profession, rank and a hash of your recipe list). If they use CraftHouse, their addon checks its local cache and only downloads professions that changed, so they can browse and filter your recipes and click "Ask to craft". "Guild" shares the key with your guild; guild members load your recipes when they select you. Guild, party and raid members get hidden addon messages. Anyone else gets hidden whispers, and recipe data is only sent to players who ask for it with the addon.
+- **Share to-do lists:** select another player as source, right-click their recipes to build a to-do list for them, then "Send to <name>" in the queue panel. They find it in the queue panel's list menu ("From <you>") and "Take over" moves it into their queue, with missing reagents. "Send" sends your own queue to the name under "Share with player".
 - Your alts show up automatically once you have opened their professions.
 
 ## Usage
