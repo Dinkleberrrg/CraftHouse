@@ -318,6 +318,41 @@ check("Mystic Robe@Henry" in owners, "global search lists Henry's robe with owne
 B.execute('CraftHouse.view.sel = nil; for _, o in ipairs(ALL) do if o.rec and o.shown and o.rec.n == "Mystic Robe" then CraftHouse.AddToList(o.rec, 1) end end')
 check(B.eval('CraftHouse.view.list.kind') == 'out' and B.eval('CraftHouse.view.list.name') == 'Henry', "adding from global search goes to the to-do list for the crafter")
 
+# sorting: skill-up colour vs. level are separate
+def order(L):
+    return L.eval('(function() local t = {} for _, r in ipairs(CraftHouse.SortedForTest()) do table.insert(t, r.n) end return table.concat(t, ",") end)()').split(",")
+A.execute('''
+CraftHouse.me.profs.Test = { rank = 1, max = 1, recipes = {
+  { n = "A30 green", l = 30, d = "easy", r = {}, t = {} },
+  { n = "B10 orange", l = 10, d = "optimal", r = {}, t = {} },
+  { n = "C20 yellow", l = 20, d = "medium", r = {}, t = {} },
+}}
+CraftHouse.Show(); CraftHouse.view.prof = "Test"; CraftHouse.view.stat = nil; CraftHouse.view.cat = "All"
+CraftHouse.view.sort = "diff"; CraftHouse.Refresh()
+function CraftHouse.SortedForTest()
+  local t = {}
+  for _, o in ipairs(ALL) do if o.rec and o.shown and o.kind == "Button" and o.points[1] then table.insert(t, { y = o.points[1][5], r = o.rec }) end end
+  table.sort(t, function(a, b) return a.y > b.y end)
+  local out = {} for _, x in ipairs(t) do table.insert(out, x.r) end
+  return out
+end''')
+check(order(A) == ['B10 orange', 'C20 yellow', 'A30 green'], "colour sort: orange, yellow, green")
+A.execute('CraftHouse.view.sort = "level"; CraftHouse.view.asc = true; CraftHouse.Refresh()')
+check(order(A) == ['B10 orange', 'C20 yellow', 'A30 green'], "level sort ascending")
+A.execute('CraftHouse.view.asc = nil; CraftHouse.Refresh()')
+check(order(A) == ['A30 green', 'C20 yellow', 'B10 orange'], "level sort descending, independent of colour")
+
+# empty received list disappears, sent draft is removed
+A.execute('CraftHouse.lists.inc.Zed = { time = time(), items = {} }; CraftHouse.view.list = { kind = "in", name = "Zed" }; CraftHouse.Refresh()')
+check(A.eval('CraftHouse.lists.inc.Zed') is None and A.eval('CraftHouse.view.list') is None, "empty received list is removed")
+
+# name suggestions
+A.execute('Fire("CHAT_MSG_WHISPER_INFORM", "hi", "Whisperguy"); GetNumFriends = function() return 1 end; GetFriendInfo = function() return "Friendo", 60, "Mage", "Org", 1 end')
+sug = A.eval('(function() local t = {} for _, x in ipairs(CraftHouse.NameSuggestions("")) do table.insert(t, x.name .. ":" .. x.tag) end return table.concat(t, ",") end)()')
+check("Whisperguy:whisper" in sug and "Friendo:friend" in sug and "Altie:your alt" in sug, "name suggestions: %s" % sug)
+sug = A.eval('(function() local t = {} for _, x in ipairs(CraftHouse.NameSuggestions("fr")) do table.insert(t, x.name) end return table.concat(t, ",") end)()')
+check(sug == "Friendo", "suggestions filter by typed prefix")
+
 print("\n%d failures" % fails)
 print("--- Henry chat:")
 print("\n".join(list(A.eval('OUT').values())[-4:]))
