@@ -100,10 +100,31 @@ function CH.ParseLine(line, t)
   return found
 end
 
+-- Category for items without a slot, from their tooltip text (lower case)
+function CH.UseCategory(text, name)
+  if strfind(text, "well fed") or strfind(text, "spend at least %d+ seconds eating") then
+    return "Buff food"
+  end
+  if strfind(name, "poison") or strfind(text, "chance of poisoning") then return "Poison" end
+  if strfind(text, "heals %d+ damage over") then return "Bandage" end
+  local hp = strfind(text, "restores [%d to]+ health") or strfind(text, "%d+ health over")
+  local mana = strfind(text, "restores [%d to]+ mana") or strfind(text, "%d+ mana over")
+  if hp and mana then return "Health + Mana" end
+  if hp then return "Health" end
+  if mana then return "Mana" end
+  if not strfind(text, "use:") then return "Material" end
+  if strfind(text, "for %d+ min") or strfind(text, "for %d+ sec") or strfind(text, "increases") then
+    if not strfind(text, "damage to") then return "Buff" end
+  end
+  if strfind(text, "damage") then return "Explosive" end
+  return "Other"
+end
+
 -- Reads the currently set tooltip into rec fields l, c, t
 local function ReadTooltip(rec, isCraft)
   local t = {}
   local cat
+  local text = ""
   for i = 1, tip:NumLines() do
     local lf = getglobal("CraftHouseTipTextLeft" .. i)
     local rf = getglobal("CraftHouseTipTextRight" .. i)
@@ -114,6 +135,7 @@ local function ReadTooltip(rec, isCraft)
       if lvl then
         rec.l = tonumber(lvl)
       elseif i > 1 then
+        text = text .. " " .. strlower(left)
         if not cat and SLOTS[left] then cat = SLOTS[left] end
         if not cat and strfind(left, "^%d+ Slot ") then cat = "Bag" end
         CH.ParseLine(left, t)
@@ -124,6 +146,8 @@ local function ReadTooltip(rec, isCraft)
   if isCraft then
     -- Enchants: "Enchant Bracer - Minor Stamina"
     cat = "Enchant"
+  elseif not cat then
+    cat = CH.UseCategory(text, strlower(rec.n or ""))
   end
   rec.c = cat or rec.c or "Other"
   rec.t = t

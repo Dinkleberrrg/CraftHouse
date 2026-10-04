@@ -21,7 +21,7 @@
 CraftHouse = {}
 local CH = CraftHouse
 
-CH.version  = "1.3.0"
+CH.version  = "1.4.0"
 CH.prefix   = "CraftHouse"
 CH.realm    = nil
 CH.player   = nil
@@ -61,10 +61,12 @@ CH.STATSHORT = {
 }
 
 -- Categories in the left list. Order = display order.
+-- Only categories that occur in the current profession are shown.
 CH.CATEGORIES = {
   "All", "Head", "Neck", "Shoulder", "Back", "Chest", "Wrist", "Hands",
   "Waist", "Legs", "Feet", "Finger", "Trinket", "Weapon", "Off Hand",
-  "Ranged", "Bag", "Enchant", "Other",
+  "Ranged", "Bag", "Enchant", "Health", "Mana", "Health + Mana",
+  "Buff food", "Buff", "Bandage", "Poison", "Explosive", "Material", "Other",
 }
 
 CH.QUALITY = {
@@ -183,6 +185,8 @@ function CH.InitDB()
   Sub(CH.me, "profs")
   CH.queue = Sub(Sub(db.queue, CH.realm), CH.player)
   CH.others = Sub(db.others, CH.realm)
+  -- professions shared per player: shared[name][prof] = true
+  CH.shared = Sub(Sub(Sub(db, "shared"), CH.realm), CH.player)
   CH.lists = Sub(Sub(Sub(db, "lists"), CH.realm), CH.player)
   Sub(CH.lists, "out"); Sub(CH.lists, "inc")
 end
@@ -288,7 +292,7 @@ SlashCmdList["CRAFTHOUSE"] = function(msg)
   if cmd == "" then
     CH.Toggle()
   elseif cmd == "send" and rest ~= "" then
-    CH.SendKeyTo(rest)
+    CH.SendKeyTo(rest, CH.DefaultShareProfs())
   elseif cmd == "guild" then
     CH.AnnounceGuild(true)
   elseif cmd == "replace" then
@@ -309,7 +313,7 @@ SlashCmdList["CRAFTHOUSE"] = function(msg)
     end
   else
     CH.Print("/ch  open/close the window")
-    CH.Print("/ch send <name>  share your recipes with a player")
+    CH.Print("/ch send <name>  share your open profession (or all) with a player")
     CH.Print("/ch guild  share your recipes with your guild")
     CH.Print("/ch replace  toggle replacing the Blizzard profession window")
     CH.Print("/ch autoopen  toggle opening with the profession window")
