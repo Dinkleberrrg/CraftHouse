@@ -239,6 +239,33 @@ check(A.eval('RIGHT') <= 822, "profession tabs fit in the window (right edge %s)
 A.execute('CraftHouse.others.Bob = { profs = {}, time = time() }; CraftHouse.Show("Bob"); CraftHouse.Forget("Bob")')
 check(A.eval('CraftHouse.others.Bob') is None and A.eval('CraftHouse.view.src') is None, "forget deletes player and returns to own recipes")
 
+# alts: the alt browses the main's recipes and leaves a to-do list for the main
+A.execute('''
+local main = CraftHouse.me
+CraftHouse.db.chars.Octo.Altie = { profs = {} }
+-- log in as the alt
+PLAYER = "Altie"; CraftHouse.player = "Altie"; CraftHouse.InitDB()
+CraftHouse.Show("Henry")
+local _, kind = CraftHouse.SourceData("Henry")
+ALTKIND = kind
+local robe
+for _, r in ipairs(main.profs.Tailoring.recipes) do if r.n == "Mystic Robe" then robe = r end end
+robe.prof = "Tailoring"
+CraftHouse.AddToList(robe, 5)
+local list, _, k, who = CraftHouse.CurrentList()
+SENT = {}
+CraftHouse.SendList(who, list)
+NSENT = table.getn(SENT)
+-- back on the main
+PLAYER = "Henry"; CraftHouse.player = "Henry"; CraftHouse.InitDB()
+QBEFORE = 0 for _, e in ipairs(CraftHouse.queue) do if e.name == "Mystic Robe" then QBEFORE = e.count end end
+MOVED = CraftHouse.TakeOver("Altie")
+QAFTER = 0 for _, e in ipairs(CraftHouse.queue) do if e.name == "Mystic Robe" then QAFTER = e.count end end
+''')
+check(A.eval('ALTKIND') == 'alt', "main shows up as alt source on the alt")
+check(A.eval('NSENT') == 0, "list for an alt is stored locally, nothing sent over the network")
+check(A.eval('MOVED') == 1 and A.eval('QAFTER') - A.eval('QBEFORE') == 5, "main takes over the alt's list (+5 robes)")
+
 print("\n%d failures" % fails)
 print("--- Henry chat:")
 print("\n".join(list(A.eval('OUT').values())[-4:]))
