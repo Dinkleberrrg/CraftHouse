@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0
+- To-do lists for your own alts: pick your main (or any alt) as source, build the list, Send list. It is stored locally and waits for that character; a chat notice on login points to it.
+- Alts are marked (your alt) in the source menu; Ask to craft is only shown for other players.
+
 ## 1.2.0
 - Delete button (bottom right) for saved players and alts, with confirmation; /ch forget also deletes alts.
 - Profession tabs size to their text and use short names (Leather, Smithing, ...) when they do not fit; hover shows rank/max.
