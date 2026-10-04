@@ -28,7 +28,8 @@ local methods = {
   Hide = function(s) local was = s.shown; s.shown = false; if was and s.scripts.OnHide then this = s; s.scripts.OnHide() end end,
   IsShown = function(s) return s.shown end,
   IsVisible = function(s) return s.shown end,
-  SetText = function(s, t) s.text = t; if s.scripts.OnTextChanged then local o = this; this = s; s.scripts.OnTextChanged(); this = o end end,
+  GetName = function(s) return s.name end,
+  SetText = function(s, t) s.text = t; if s.name and s.kind == "Button" and _G[s.name .. "Text"] then _G[s.name .. "Text"].text = t end; if s.scripts.OnTextChanged then local o = this; this = s; s.scripts.OnTextChanged(); this = o end end,
   GetText = function(s) return s.text end,
   GetChecked = function(s) return s.checked end,
   SetChecked = function(s, v) s.checked = v end,
@@ -46,7 +47,7 @@ Obj.__index = function(t, k) if type(k) == "string" and k:match("^%u") then retu
 function CreateFrame(kind, name, parent, tmpl)
   local f = new(name); f.shown = true
   f.kind = kind
-  if tmpl == "UICheckButtonTemplate" then new(name .. "Text") end
+  if tmpl == "UICheckButtonTemplate" or tmpl == "UIPanelButtonTemplate" then new(name .. "Text") end
   if tmpl == "GameTooltipTemplate" then
     for i = 1, 30 do new(name .. "TextLeft" .. i); new(name .. "TextRight" .. i) end
   end
@@ -61,6 +62,9 @@ function FauxScrollFrame_Update() end
 function FauxScrollFrame_GetOffset() return 0 end
 function FauxScrollFrame_OnVerticalScroll() end
 function IsShiftKeyDown() return false end
+StaticPopupDialogs = {}
+function StaticPopup_Show(n, a) POPUP = {n, a} end
+YES, NO = "Yes", "No"
 function IsControlKeyDown() return false end
 function GetRealmName() return "Octo" end
 PLAYER = "Henry"

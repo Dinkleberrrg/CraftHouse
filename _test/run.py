@@ -224,6 +224,21 @@ A.execute('SENT = {}; CraftHouse.SendKeyTo("Bob"); Tick(0.4)')
 s1 = list(list(A.eval('SENT').values())[0].values())
 check(s1[0] == 'ADDON' and s1[3] == 'GUILD', "guild member gets addon message, not whisper")
 
+# profession tabs fit (long names get shortened)
+A.execute("""CraftHouse.me.profs.Leatherworking = { rank = 300, max = 300, recipes = {} }
+CraftHouse.me.profs.Blacksmithing = { rank = 300, max = 300, recipes = {} }
+CraftHouse.me.profs.Engineering = { rank = 300, max = 300, recipes = {} }
+CraftHouse.me.profs["First Aid"] = { rank = 300, max = 300, recipes = {} }
+CraftHouse.me.profs.Cooking = { rank = 300, max = 300, recipes = {} }
+CraftHouse.Show(); CraftHouse.Refresh()
+RIGHT = 0
+for _, o in ipairs(ALL) do if o.prof and o.w and o.shown then local x = o.points[1][4]; if x + o.w > RIGHT then RIGHT = x + o.w end end end""")
+check(A.eval('RIGHT') <= 822, "profession tabs fit in the window (right edge %s)" % A.eval('RIGHT'))
+
+# forget a player
+A.execute('CraftHouse.others.Bob = { profs = {}, time = time() }; CraftHouse.Show("Bob"); CraftHouse.Forget("Bob")')
+check(A.eval('CraftHouse.others.Bob') is None and A.eval('CraftHouse.view.src') is None, "forget deletes player and returns to own recipes")
+
 print("\n%d failures" % fails)
 print("--- Henry chat:")
 print("\n".join(list(A.eval('OUT').values())[-4:]))
