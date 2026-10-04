@@ -203,6 +203,20 @@ function CH.SendList(name, list)
     CH.Print("The list is empty.")
     return
   end
+  -- Own alt: same account, so the list is simply stored for them
+  if CH.db.chars[CH.realm][name] and name ~= CH.player then
+    local items = {}
+    for _, e in ipairs(list) do
+      table.insert(items, { prof = e.prof, name = e.name, count = e.count })
+    end
+    local lists = CH.db.lists[CH.realm]
+    if not lists[name] then lists[name] = { out = {}, inc = {} } end
+    if not lists[name].inc then lists[name].inc = {} end
+    lists[name].inc[CH.player] = { time = time(), items = items }
+    CH.Print("To-do list (" .. table.getn(items) .. " recipes) is waiting for " .. name
+      .. ". Log in with " .. name .. " to craft it.")
+    return
+  end
   local entries = {}
   for _, e in ipairs(list) do
     table.insert(entries, e.prof .. ";" .. gsub(e.name, "[;~%^]", "") .. ";" .. e.count)

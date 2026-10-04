@@ -280,6 +280,17 @@ end
 --   CH.lists.inc[name] = { time, items = { entries } }   list name sent me
 --------------------------------------------------------------------------
 
+-- On login: tell about to-do lists that are waiting (e.g. from your main)
+CH.On("PLAYER_ENTERING_WORLD", function()
+  if CH.listNotice then return end
+  CH.listNotice = true
+  CH.After(6, function()
+    for name, l in pairs(CH.lists.inc) do
+      CH.Print("To-do list from " .. name .. " (" .. table.getn(l.items) .. " recipes) is waiting. /ch, then pick it in the queue panel.")
+    end
+  end)
+end)
+
 function CH.OutList(name)
   if not CH.lists.out[name] then CH.lists.out[name] = {} end
   return CH.lists.out[name]

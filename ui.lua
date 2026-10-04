@@ -414,7 +414,9 @@ local function UpdateDetails()
     d.all:SetText("All (" .. a .. ")")
     if CH.openProf == rec.prof then d.craft:SetText("Craft") else d.craft:SetText("Open + Craft") end
   else
-    d.craft:Hide(); d.all:Hide(); d.queue:Show(); d.num:Show(); d.ask:Show()
+    local _, kind = SrcData()
+    d.craft:Hide(); d.all:Hide(); d.queue:Show(); d.num:Show()
+    if kind == "other" then d.ask:Show() else d.ask:Hide() end
     d.queue:SetText("+ To-do list")
   end
 end
@@ -529,7 +531,7 @@ local function UpdateHeader()
   local data, kind = SrcData()
   local name = view.src or CH.player
   local label = name
-  if kind == "me" then label = name .. " (you)" elseif kind == "alt" then label = name .. " (alt)" end
+  if kind == "me" then label = name .. " (you)" elseif kind == "alt" then label = name .. " |cff33ffcc(alt)|r" end
   ui.srcBtn:SetText(label)
 
   local profs = {}
@@ -677,7 +679,7 @@ local function Build()
     for _, s in ipairs(CH.Sources()) do
       local label = s.name
       if s.kind == "me" then label = label .. " (you)"
-      elseif s.kind == "alt" then label = label .. " (alt)"
+      elseif s.kind == "alt" then label = label .. "  |cff33ffcc(your alt)|r"
       else
         label = label .. "  |cff888888" .. CH.Ago(s.data.time or s.data.keytime) .. "|r"
         if CH.IsOutdated(s.name) then label = label .. " |cffffd100*|r" end
@@ -689,7 +691,7 @@ local function Build()
       view.prof = "All"
       view.sel = nil
       local _, kind = CH.SourceData(name)
-      if kind == "other" then
+      if kind ~= "me" then
         view.list = { kind = "out", name = name }
       elseif view.list and view.list.kind == "out" then
         view.list = nil
