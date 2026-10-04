@@ -266,6 +266,58 @@ check(A.eval('ALTKIND') == 'alt', "main shows up as alt source on the alt")
 check(A.eval('NSENT') == 0, "list for an alt is stored locally, nothing sent over the network")
 check(A.eval('MOVED') == 1 and A.eval('QAFTER') - A.eval('QBEFORE') == 5, "main takes over the alt's list (+5 robes)")
 
+# consumable categories
+A.execute('''
+local U = CraftHouse.UseCategory
+UC = {
+  U("use: restores 552 health over 21 sec. if you spend at least 10 seconds eating you will become well fed", "x"),
+  U("use: restores 455 to 585 health.", "x"),
+  U("use: restores 700 to 900 mana.", "x"),
+  U("", "bolt of wool"),
+  U("use: heals 400 damage over 8 sec.", "x"),
+  U("use: increases agility by 25 for 1 hr.", "x"),
+  U("use: restores 1000 health and 1000 mana over 30 sec.", "x"),
+  U("use: inflicts 100 to 200 fire damage to enemies in a 5 yard radius", "x"),
+}''')
+check(list(A.eval('UC').values()) == ['Buff food', 'Health', 'Mana', 'Material', 'Bandage', 'Buff', 'Health + Mana', 'Explosive'],
+      "consumable categories: %s" % list(A.eval('UC').values()))
+
+# dynamic categories: only what Tailoring has
+A.execute('CraftHouse.Show(); CraftHouse.view.prof = "Tailoring"; CraftHouse.Refresh()')
+cats = A.eval('(function() local t = {} for _, o in ipairs(ALL) do if o.cat and o.shown then table.insert(t, o.cat) end end return table.concat(t, ",") end)()').split(",")
+check("Bag" in cats and "Chest" in cats and "Head" not in cats and "Health" not in cats, "category list is dynamic: %s" % cats)
+
+# share only some professions
+C = client("Carl")
+def deliver_to_carl():
+    sent = [list(m.values()) for m in A.eval('SENT').values()]
+    A.execute('SENT = {}')
+    for m in sent:
+        if m[0] == 'WHISPER' and m[2] == 'Carl':
+            C.execute(f'Fire("CHAT_MSG_WHISPER", {lua_str(m[1])}, "Henry")')
+    sent = [list(m.values()) for m in C.eval('SENT').values()]
+    C.execute('SENT = {}')
+    for m in sent:
+        if m[0] == 'WHISPER':
+            A.execute(f'Fire("CHAT_MSG_WHISPER", {lua_str(m[1])}, "Carl")')
+A.execute('GUILD = nil; SENT = {}; CraftHouse.SendKeyTo("Carl", { Tailoring = true })')
+for _ in range(80):
+    A.execute('Tick(0.4)'); C.execute('Tick(0.4)'); deliver_to_carl()
+ck = C.eval('CraftHouse.others.Henry.key')
+check(sorted(ck.keys()) == ['Tailoring'], "partial key only contains Tailoring")
+check(C.eval('CraftHouse.others.Henry.profs.Tailoring.count') == 124, "Carl loaded Tailoring")
+# Carl asks for Leatherworking anyway -> refused
+A.execute('SENT = {}')
+A.execute('Fire("CHAT_MSG_WHISPER", "[CH]Q^Henry^Leatherworking", "Carl"); Tick(0.4, 3)')
+check(len(list(A.eval('SENT').values())) == 0, "unshared profession is not sent")
+
+# global search: Bob sees Henry's Int items with the crafter name
+B.execute('CraftHouse.Show("*"); CraftHouse.view.stat = "int"; CraftHouse.view.prof = "All"; CraftHouse.view.cat = "All"; CraftHouse.Refresh()')
+owners = B.eval('(function() local t = {} for _, o in ipairs(ALL) do if o.rec and o.shown and o.kind == "Button" then table.insert(t, o.rec.n .. "@" .. o.rec.owner) end end return table.concat(t, ",") end)()')
+check("Mystic Robe@Henry" in owners, "global search lists Henry's robe with owner (%s)" % owners)
+B.execute('CraftHouse.view.sel = nil; for _, o in ipairs(ALL) do if o.rec and o.shown and o.rec.n == "Mystic Robe" then CraftHouse.AddToList(o.rec, 1) end end')
+check(B.eval('CraftHouse.view.list.kind') == 'out' and B.eval('CraftHouse.view.list.name') == 'Henry', "adding from global search goes to the to-do list for the crafter")
+
 print("\n%d failures" % fails)
 print("--- Henry chat:")
 print("\n".join(list(A.eval('OUT').values())[-4:]))
