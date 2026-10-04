@@ -21,7 +21,7 @@
 CraftHouse = {}
 local CH = CraftHouse
 
-CH.version  = "1.4.0"
+CH.version  = "1.5.0"
 CH.prefix   = "CraftHouse"
 CH.realm    = nil
 CH.player   = nil
@@ -314,7 +314,7 @@ SlashCmdList["CRAFTHOUSE"] = function(msg)
   else
     CH.Print("/ch  open/close the window")
     CH.Print("/ch send <name>  share your open profession (or all) with a player")
-    CH.Print("/ch guild  share your recipes with your guild")
+    CH.Print("/ch guild  share your recipes with your guild (nothing is shared automatically)")
     CH.Print("/ch replace  toggle replacing the Blizzard profession window")
     CH.Print("/ch autoopen  toggle opening with the profession window")
     CH.Print("/ch forget <name>  delete a player's shared recipes")

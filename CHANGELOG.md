@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0
+- Level and skill-up colour are separate sort keys: Skill-up sorts by colour, clicking Lvl sorts by level (again: reverse).
+- Empty received lists disappear; sent to-do lists are removed from your drafts; lists for/from others have a Delete button.
+- Name suggestions when sharing (like the mailbox): group, whispers of this session, friends, your alts, players who shared with you. Type to filter or click v.
+- Nothing syncs automatically any more: no guild announcement on login or after new recipes, no requests when you pick a player. Use Send, Guild and Update.
+
 ## 1.4.0
 - Categories are dynamic: only categories with recipes in the current view are listed, with counts. New categories for items without a slot: Health, Mana, Health + Mana, Buff food, Buff, Bandage, Poison, Explosive, Material.
 - Share only some professions: Send opens a picker, preselected with the open (or selected) profession. Requests for professions you did not share are ignored.

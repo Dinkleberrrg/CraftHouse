@@ -186,6 +186,8 @@ function CH.AnnounceGuild(verbose)
     return
   end
   if CH.Count(CH.me.profs) == 0 then return end
+  CH.shared["@guild"] = {}
+  for prof in pairs(CH.me.profs) do CH.shared["@guild"][prof] = true end
   Send("GUILD", nil, KeyBody(""))
   if verbose then CH.Print("Shared your recipe key with your guild.") end
 end
@@ -245,6 +247,7 @@ function CH.SendList(name, list)
     lists[name].inc[CH.player] = { time = time(), items = items }
     CH.Print("To-do list (" .. table.getn(items) .. " recipes) is waiting for " .. name
       .. ". Log in with " .. name .. " to craft it.")
+    if CH.OnListSent then CH.OnListSent(name, list) end
     return
   end
   local entries = {}
@@ -273,6 +276,7 @@ function CH.SendList(name, list)
     end
   end
   CH.Print("Sent a to-do list (" .. table.getn(entries) .. " recipes) to " .. name .. ".")
+  if CH.OnListSent then CH.OnListSent(name, list) end
 end
 
 --------------------------------------------------------------------------
@@ -363,7 +367,7 @@ local function Handle(body, from, route)
       local key = route .. (target or "") .. prof .. (p and p.hash or "")
       -- only professions we shared with them (or with the guild)
       local ok = (CH.shared[from] and CH.shared[from][prof])
-        or (route == "GUILD" and CH.db.settings.guild == 1)
+        or (route == "GUILD" and CH.shared["@guild"] and CH.shared["@guild"][prof])
       if ok and (not answered[key] or GetTime() - answered[key] > 20) then
         answered[key] = GetTime()
         SendProf(route, target, prof)
@@ -460,32 +464,46 @@ function ChatFrame_OnEvent(event)
   return origChatFrame_OnEvent(event)
 end
 
+-- Nothing is shared or synced automatically: keys go out only when you
+-- press Send / Guild, and data only to players who then ask for it.
+
 --------------------------------------------------------------------------
--- Guild announcement on login and after recipe changes
+-- Name suggestions for "Share with player": group, friends, whispers
+-- of this session, your alts and players who shared with you
 --------------------------------------------------------------------------
 
-local lastHashes
-local function HashSummary()
-  local t = {}
-  for prof, p in pairs(CH.me.profs) do table.insert(t, prof .. (p.hash or "")) end
-  table.sort(t)
-  return table.concat(t, ",")
-end
+local recent = {}  -- names whispered with this session, newest last
 
-CH.On("PLAYER_ENTERING_WORLD", function()
-  if CH.loggedIn then return end
-  CH.loggedIn = true
-  CH.After(15, function()
-    lastHashes = HashSummary()
-    if CH.db.settings.guild == 1 then CH.AnnounceGuild() end
-  end)
-end)
-
-function CH.OnRecipesChanged()
-  if not lastHashes or CH.db.settings.guild ~= 1 then return end
-  local h = HashSummary()
-  if h ~= lastHashes then
-    lastHashes = h
-    CH.After(5, function() CH.AnnounceGuild() end)
+local function Remember(name)
+  if not name or name == "" then return end
+  for i, n in ipairs(recent) do
+    if n == name then table.remove(recent, i); break end
   end
+  table.insert(recent, name)
+end
+CH.On("CHAT_MSG_WHISPER", function(_, from) Remember(from) end)
+CH.On("CHAT_MSG_WHISPER_INFORM", function(_, to) Remember(to) end)
+
+-- Returns { {name, tag}, ... } whose name starts with prefix
+function CH.NameSuggestions(prefix)
+  prefix = strlower(prefix or "")
+  local out, seen = {}, { [CH.player] = true }
+  local function Add(name, tag)
+    if not name or seen[name] then return end
+    if prefix ~= "" and strsub(strlower(name), 1, strlen(prefix)) ~= prefix then return end
+    seen[name] = true
+    table.insert(out, { name = name, tag = tag })
+  end
+  for i = 1, GetNumRaidMembers() do Add(UnitName("raid" .. i), "group") end
+  for i = 1, GetNumPartyMembers() do Add(UnitName("party" .. i), "group") end
+  for i = table.getn(recent), 1, -1 do Add(recent[i], "whisper") end
+  if GetNumFriends then
+    for i = 1, GetNumFriends() do
+      local name, _, _, _, connected = GetFriendInfo(i)
+      Add(name, connected and "friend" or "friend, offline")
+    end
+  end
+  for name in pairs(CH.db.chars[CH.realm]) do Add(name, "your alt") end
+  for name in pairs(CH.others) do Add(name, "shared with you") end
+  return out
 end
