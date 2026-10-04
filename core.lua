@@ -5,6 +5,8 @@
        chars[realm][char] = { profs = { [prof] = PROF } }   own characters
        others[realm][name] = { time, profs = { [prof] = PROF } }  shared by others
        queue[realm][char] = { {prof, name, count}, ... }
+       lists[realm][char] = { out = { [name] = entries },  to-do lists for others
+                              inc = { [name] = { time, items } } }  from others
        pos, scale, settings
 
      PROF = { rank, max, hash, count, craft (1 = Craft API, e.g. Enchanting),
@@ -19,7 +21,7 @@
 CraftHouse = {}
 local CH = CraftHouse
 
-CH.version  = "1.0.0"
+CH.version  = "1.1.0"
 CH.prefix   = "CraftHouse"
 CH.realm    = nil
 CH.player   = nil
@@ -181,6 +183,8 @@ function CH.InitDB()
   Sub(CH.me, "profs")
   CH.queue = Sub(Sub(db.queue, CH.realm), CH.player)
   CH.others = Sub(db.others, CH.realm)
+  CH.lists = Sub(Sub(Sub(db, "lists"), CH.realm), CH.player)
+  Sub(CH.lists, "out"); Sub(CH.lists, "inc")
 end
 
 -- All sources the browser can show: own char, own alts, other players

@@ -18,6 +18,7 @@
        Q^<target>^<prof>,<prof>         request recipe lists from target
        P^<prof>^<rank>^<max>^<hash>^<count>^<craft>   start of a list
        E^<prof>^<entry>~<entry>~...     recipes
+       O^<target>^<id>^<part>^<parts>^<prof;name;count>~...   to-do list
      entry: id;quality;level;category;stats;reagents;name;made
        stats    "int=5/sta=3"
        reagents "2321*2/2589*4" (item id, or the name when the id is unknown)
@@ -29,6 +30,7 @@ local MAX_MSG    = 225
 local SEND_DELAY = 0.35
 local WHISPER_TAG = "[CH]"
 local KEY_TEXT = "[CraftHouse] I shared my recipes with you (needs the CraftHouse addon). #"
+local LIST_TEXT = "[CraftHouse] I sent you a to-do list (needs the CraftHouse addon). #"
 
 --------------------------------------------------------------------------
 -- Throttled sending
@@ -189,9 +191,51 @@ function CH.IsOutdated(name)
   end
 end
 
+-- Sends a to-do list (entries {prof, name, count}) to a player
+function CH.SendList(name, list)
+  name = gsub(name or "", "^%s*(.-)%s*$", "%1")
+  if name == "" then
+    CH.Print("Type a player name first.")
+    return
+  end
+  name = strupper(strsub(name, 1, 1)) .. strlower(strsub(name, 2))
+  if not list or table.getn(list) == 0 then
+    CH.Print("The list is empty.")
+    return
+  end
+  local entries = {}
+  for _, e in ipairs(list) do
+    table.insert(entries, e.prof .. ";" .. gsub(e.name, "[;~%^]", "") .. ";" .. e.count)
+  end
+  -- pack the entries into as few messages as possible
+  local id = CH.Hash(name .. time() .. GetTime())
+  local chunks, blob = {}, ""
+  for _, e in ipairs(entries) do
+    if blob ~= "" and strlen(blob) + 1 + strlen(e) > MAX_MSG - 90 then
+      table.insert(chunks, blob)
+      blob = ""
+    end
+    blob = (blob == "") and e or (blob .. "~" .. e)
+  end
+  table.insert(chunks, blob)
+  local route = Route(name)
+  local total = table.getn(chunks)
+  for i, c in ipairs(chunks) do
+    local body = "O^" .. name .. "^" .. id .. "^" .. i .. "^" .. total .. "^" .. c
+    if route == "WHISPER" then
+      Send("WHISPER", name, body, (i == 1) and (LIST_TEXT .. body) or nil)
+    else
+      Send(route, nil, body)
+    end
+  end
+  CH.Print("Sent a to-do list (" .. table.getn(entries) .. " recipes) to " .. name .. ".")
+end
+
 --------------------------------------------------------------------------
 -- Receiving
 --------------------------------------------------------------------------
+
+local incoming = {}  -- [sender] = { id, parts = {}, got, total }
 
 local staging = {}   -- [sender .. "\1" .. prof] = { head, recipes }
 local answered = {}  -- [route .. target .. prof] = time, against request storms
@@ -273,6 +317,33 @@ local function Handle(body, from, route)
       end
     end
 
+  elseif kind == "O" then
+    if f[2] ~= CH.player then return end
+    local id, part, total = f[3], tonumber(f[4]) or 1, tonumber(f[5]) or 1
+    local inc = incoming[from]
+    if not inc or inc.id ~= id then
+      inc = { id = id, parts = {}, got = 0, total = total }
+      incoming[from] = inc
+    end
+    if not inc.parts[part] then
+      inc.parts[part] = f[6] or ""
+      inc.got = inc.got + 1
+    end
+    if inc.got < inc.total then return end
+    incoming[from] = nil
+    local items = {}
+    for p = 1, inc.total do
+      for _, e in ipairs((CH.Split(inc.parts[p] or "", "~"))) do
+        local x = CH.Split(e, ";")
+        if x[1] and x[2] then
+          table.insert(items, { prof = x[1], name = x[2], count = tonumber(x[3]) or 1 })
+        end
+      end
+    end
+    CH.lists.inc[from] = { time = time(), items = items }
+    CH.Print(from .. " sent you a to-do list (" .. table.getn(items) .. " recipes). /ch to see it.")
+    if CH.OnListReceived then CH.OnListReceived(from) end
+
   elseif kind == "P" then
     if CH.db.chars[CH.realm][from] then return end
     staging[from .. "\1" .. (f[2] or "")] = {
@@ -316,6 +387,9 @@ local function WhisperBody(msg)
   end
   if strsub(msg, 1, strlen(KEY_TEXT)) == KEY_TEXT then
     return strsub(msg, strlen(KEY_TEXT) + 1)
+  end
+  if strsub(msg, 1, strlen(LIST_TEXT)) == LIST_TEXT then
+    return strsub(msg, strlen(LIST_TEXT) + 1)
   end
 end
 

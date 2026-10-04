@@ -18,6 +18,7 @@ local view = {
   src = nil, prof = "All", search = "", lmin = nil, lmax = nil, q = 0,
   stat = nil, statMin = 1, cat = "All", mats = false, skill = false,
   sort = "level", sel = nil,
+  list = nil,  -- nil = own queue, { kind = "out"/"in", name = player }
 }
 CH.view = view
 
@@ -318,7 +319,7 @@ local function CreateRows(parent)
         return
       end
       view.sel = rec
-      if arg1 == "RightButton" and IsMine() then CH.QueueAdd(rec, 1) end
+      if arg1 == "RightButton" then CH.AddToList(rec, 1) end
       CH.Refresh()
     end)
     r:SetScript("OnEnter", function()
@@ -396,11 +397,13 @@ local function UpdateDetails()
   d.reag:SetText(table.concat(lines, "\n"))
   if mine then
     d.craft:Show(); d.all:Show(); d.queue:Show(); d.num:Show(); d.ask:Hide()
+    d.queue:SetText("+ Queue")
     local a = CH.Available(rec)
     d.all:SetText("All (" .. a .. ")")
     if CH.openProf == rec.prof then d.craft:SetText("Craft") else d.craft:SetText("Open + Craft") end
   else
-    d.craft:Hide(); d.all:Hide(); d.queue:Hide(); d.num:Hide(); d.ask:Show()
+    d.craft:Hide(); d.all:Hide(); d.queue:Show(); d.num:Show(); d.ask:Show()
+    d.queue:SetText("+ To-do for " .. view.src)
   end
 end
 
@@ -408,34 +411,96 @@ end
 -- Queue (right)
 --------------------------------------------------------------------------
 
+-- The list shown in the queue panel: entries, whose recipes, kind, player
+local function CurrentList()
+  local L = view.list
+  if L and L.kind == "out" then
+    return CH.OutList(L.name), (CH.SourceData(L.name)), "out", L.name
+  end
+  if L and L.kind == "in" then
+    local l = CH.lists.inc[L.name]
+    if l then return l.items, CH.me, "in", L.name end
+    view.list = nil
+  end
+  return CH.queue, CH.me, "me"
+end
+CH.CurrentList = CurrentList
+
+-- Right-click / "+ Queue": own recipes go to the own queue, another
+-- player's recipes to the to-do list for that player.
+function CH.AddToList(rec, count)
+  if IsMine() then
+    if view.list and view.list.kind == "out" then view.list = nil end
+    CH.QueueAdd(rec, count)
+  else
+    view.list = { kind = "out", name = view.src }
+    CH.QueueAdd(rec, count, CH.OutList(view.src))
+  end
+end
+
 local function UpdateQueue()
   local q = ui.queue
-  local n = table.getn(CH.queue)
+  local list, data, kind, who = CurrentList()
+  local n = table.getn(list)
+
+  if kind == "me" then
+    q.listBtn:SetText("My queue")
+    q.b1:SetText("Craft next"); q.b2:Show()
+    q.mtitle:SetText("Still missing for the queue")
+  elseif kind == "out" then
+    q.listBtn:SetText("For " .. who)
+    q.b1:SetText("Send to " .. who); q.b2:Hide()
+    q.mtitle:SetText("Reagents " .. who .. " needs")
+  else
+    q.listBtn:SetText("From " .. who)
+    q.b1:SetText("Take over"); q.b2:Hide()
+    q.mtitle:SetText("Still missing for this list")
+  end
+
   for i = 1, QROWS do
     local row = q.rows[i]
-    local e = CH.queue[i]
+    local e = list[i]
     row.entry = e
     row.index = i
     if e then
-      local rec = CH.QueueRecipe(e)
-      local ok = rec and CH.Available(rec) > 0
-      row.text:SetText((ok and "|cffffffff" or "|cff888888") .. e.count .. "x " .. e.name .. "|r")
+      local rec = CH.QueueRecipe(e, data)
+      local col = "|cffffffff"
+      local suffix = ""
+      if kind == "me" then
+        if not (rec and CH.Available(rec) > 0) then col = "|cff888888" end
+      elseif kind == "in" then
+        if not rec then col = "|cffff6060"; suffix = " (unknown)"
+        elseif CH.Available(rec) < 1 then col = "|cff888888" end
+      end
+      row.text:SetText(col .. e.count .. "x " .. e.name .. suffix .. "|r")
       row:Show()
     else
       row:Hide()
     end
   end
-  q.more:SetText(n > QROWS and ("+" .. (n - QROWS) .. " more") or (n == 0 and "|cff888888Empty. Right-click a recipe to add it.|r" or ""))
-
-  local lines = {}
-  for _, v in ipairs(CH.QueueReagents()) do
-    local name = v.name or ItemName(v.id)
-    local missing = v.need - v.have
-    if missing > 0 then
-      table.insert(lines, "|cffff4040" .. missing .. "|r " .. name)
+  local empty = ""
+  if n == 0 then
+    if kind == "out" then
+      empty = "|cff888888Right-click " .. who .. "'s recipes to add them.|r"
+    else
+      empty = "|cff888888Empty. Right-click a recipe to add it.|r"
     end
   end
-  if table.getn(lines) == 0 and n > 0 then lines[1] = "|cff20ff20All reagents in bags.|r" end
+  q.more:SetText(n > QROWS and ("+" .. (n - QROWS) .. " more") or empty)
+
+  local lines = {}
+  for _, v in ipairs(CH.QueueReagents(list, data)) do
+    local name = v.name or ItemName(v.id)
+    if kind == "out" then
+      table.insert(lines, v.need .. " " .. name .. " |cff888888(you have " .. v.have .. ")|r")
+    else
+      local missing = v.need - v.have
+      if missing > 0 then
+        table.insert(lines, "|cffff4040" .. missing .. "|r " .. name)
+      end
+    end
+  end
+  if table.getn(lines) == 0 and n > 0 and kind ~= "out" then lines[1] = "|cff20ff20All reagents in bags.|r" end
   if table.getn(lines) > 8 then
     local more = table.getn(lines) - 7
     while table.getn(lines) > 7 do table.remove(lines) end
@@ -585,6 +650,11 @@ local function Build()
       view.prof = "All"
       view.sel = nil
       local _, kind = CH.SourceData(name)
+      if kind == "other" then
+        view.list = { kind = "out", name = name }
+      elseif view.list and view.list.kind == "out" then
+        view.list = nil
+      end
       CH.watching = (kind == "other") and name or nil
       if kind == "other" and CH.others[name] and CH.others[name].route ~= "WHISPER" then
         CH.RequestUpdate(name)
@@ -728,7 +798,7 @@ local function Build()
     if view.sel then CH.Craft(view.sel, math.max(1, CH.Available(view.sel))) end
   end)
   d.queue = Button(d, "+ Queue", 300, -71, 144, 22, function()
-    if view.sel then CH.QueueAdd(view.sel, tonumber(d.num:GetText()) or 1) end
+    if view.sel then CH.AddToList(view.sel, tonumber(d.num:GetText()) or 1) end
   end)
   d.ask = Button(d, "Ask to craft", 340, -25, 104, 22, function()
     local rec = view.sel
@@ -744,7 +814,32 @@ local function Build()
   -- Right: queue
   local q = Panel(main, 588, -92, 236, 250)
   ui.queue = q
-  local qt = Text(q, "GameFontNormal", 8, -8); qt:SetText("Queue")
+  q.listBtn = Button(q, "My queue", 6, -5, 150, 20, function()
+    local items = { { text = "My queue", value = "", checked = view.list == nil } }
+    local names = {}
+    for name in pairs(CH.lists.inc) do table.insert(names, name) end
+    table.sort(names)
+    for _, name in ipairs(names) do
+      local l = CH.lists.inc[name]
+      table.insert(items, { text = "From " .. name .. " (" .. table.getn(l.items) .. ")  |cff888888" .. CH.Ago(l.time) .. "|r",
+        value = "in:" .. name, checked = view.list and view.list.kind == "in" and view.list.name == name })
+    end
+    names = {}
+    for name, l in pairs(CH.lists.out) do
+      if table.getn(l) > 0 then table.insert(names, name) end
+    end
+    table.sort(names)
+    for _, name in ipairs(names) do
+      table.insert(items, { text = "For " .. name .. " (" .. table.getn(CH.lists.out[name]) .. ")",
+        value = "out:" .. name, checked = view.list and view.list.kind == "out" and view.list.name == name })
+    end
+    Menu(this, items, function(v)
+      local _, _, kind, name = strfind(v, "^(%a+):(.+)$")
+      if kind then view.list = { kind = kind, name = name } else view.list = nil end
+      CH.Refresh()
+    end)
+  end)
+  Tip(q.listBtn, "Your queue, to-do lists other players sent you, and lists you are putting together for others.")
   q.rows = {}
   for i = 1, QROWS do
     local row = CreateFrame("Button", nil, q)
@@ -756,9 +851,12 @@ local function Build()
     row.text:SetPoint("LEFT", row, "LEFT", 2, 0)
     row.text:SetWidth(200); row.text:SetJustifyH("LEFT")
     row:SetScript("OnClick", function()
-      local rec = this.entry and CH.QueueRecipe(this.entry)
+      if not this.entry then return end
+      local _, data, kind, who = CurrentList()
+      local rec = CH.QueueRecipe(this.entry, data)
       if rec then
-        view.src, view.prof, view.sel = nil, rec.prof, rec
+        view.src = (kind == "out") and who or nil
+        view.prof, view.sel = rec.prof, rec
         CH.Refresh()
       end
     end)
@@ -772,7 +870,7 @@ local function Build()
       local e = this.row.entry
       if not e then return end
       if IsShiftKeyDown() or e.count <= 1 then
-        CH.QueueRemove(this.row.index)
+        CH.QueueRemove(this.row.index, (CurrentList()))
       else
         e.count = e.count - 1
         CH.Refresh()
@@ -787,20 +885,44 @@ local function Build()
     q.rows[i] = row
   end
   q.more = Text(q, "GameFontDisableSmall", 8, -26 - QROWS * 16 - 2, 220)
-  Button(q, "Craft next", 8, -222, 110, 22, function() CH.QueueNext() end)
-  Button(q, "Clear", 122, -222, 106, 22, function()
-    for i = table.getn(CH.queue), 1, -1 do table.remove(CH.queue, i) end
+  q.b1 = Button(q, "Craft next", 8, -222, 104, 22, function()
+    local list, _, kind, who = CurrentList()
+    if kind == "me" then
+      CH.QueueNext()
+    elseif kind == "out" then
+      CH.SendList(who, list)
+    else
+      local moved = CH.TakeOver(who)
+      CH.Print("Moved " .. moved .. " recipes to your queue.")
+      if not CH.lists.inc[who] then view.list = nil end
+      CH.Refresh()
+    end
+  end)
+  q.b2 = Button(q, "Send", 114, -222, 56, 22, function()
+    CH.SendList(ui.shareName:GetText(), CH.queue)
+  end)
+  Tip(q.b2, "Send your queue as a to-do list to the player named under 'Share with player'.")
+  Button(q, "Clear", 172, -222, 56, 22, function()
+    local _, _, kind, who = CurrentList()
+    if kind == "me" then
+      for i = table.getn(CH.queue), 1, -1 do table.remove(CH.queue, i) end
+    elseif kind == "out" then
+      CH.lists.out[who] = nil
+    else
+      CH.lists.inc[who] = nil
+      view.list = nil
+    end
     CH.Refresh()
   end)
 
   -- Right: missing reagents
   local m = Panel(main, 588, -346, 236, 76)
-  local mt = Text(m, "GameFontNormalSmall", 8, -6); mt:SetText("Still missing for the queue")
+  q.mtitle = Text(m, "GameFontNormalSmall", 8, -6)
   q.missing = Text(m, "GameFontHighlightSmall", 8, -20, 220)
 
   -- Right: sharing
   local s = Panel(main, 588, -426, 236, 66)
-  local st = Text(s, "GameFontNormalSmall", 8, -6); st:SetText("Share my recipes")
+  local st = Text(s, "GameFontNormalSmall", 8, -6); st:SetText("Share with player")
   ui.shareName = EditBox(s, 8, -20, 100)
   ui.shareName:SetScript("OnEnterPressed", function()
     this:ClearFocus(); CH.SendKeyTo(this:GetText())
@@ -855,6 +977,10 @@ end
 
 function CH.OnScanned(prof)
   if CH.OnRecipesChanged then CH.OnRecipesChanged() end
+end
+
+function CH.OnListReceived(from)
+  if CH.IsShown() then CH.Refresh() end
 end
 
 function CH.OnBagsChanged()
