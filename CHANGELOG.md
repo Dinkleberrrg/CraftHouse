@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.0
+- Categories are dynamic: only categories with recipes in the current view are listed, with counts. New categories for items without a slot: Health, Mana, Health + Mana, Buff food, Buff, Bandage, Poison, Explosive, Material.
+- Share only some professions: Send opens a picker, preselected with the open (or selected) profession. Requests for professions you did not share are ignored.
+- Global search: source "Everyone" searches you, your alts and all shared players at once; the right column shows who can craft it, and right-click adds it to the to-do list for that player.
+
 ## 1.3.0
 - To-do lists for your own alts: pick your main (or any alt) as source, build the list, Send list. It is stored locally and waits for that character; a chat notice on login points to it.
 - Alts are marked (your alt) in the source menu; Ask to craft is only shown for other players.

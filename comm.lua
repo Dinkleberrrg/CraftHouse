@@ -13,8 +13,9 @@
      who have the addon.
 
      Messages, fields separated by "^":
-       K^<ver>^<target>^<prof>:<rank>:<max>:<hash>:<count>^...
-            key; target = player it was sent to, "" = announcement
+       K^<ver>^<target>^<mode>^<prof>:<rank>:<max>:<hash>:<count>^...
+            key; target = player it was sent to, "" = announcement;
+            mode a = all professions, p = only the listed ones
        Q^<target>^<prof>,<prof>         request recipe lists from target
        P^<prof>^<rank>^<max>^<hash>^<count>^<craft>   start of a list
        E^<prof>^<entry>~<entry>~...     recipes
@@ -87,13 +88,25 @@ end
 -- Building messages
 --------------------------------------------------------------------------
 
-local function KeyBody(target)
-  local parts = { "K", CH.version, target or "" }
+-- profs = { [prof] = true } to share only some, nil = all
+local function KeyBody(target, profs)
+  local parts = { "K", CH.version, target or "", profs and "p" or "a" }
   for prof, p in pairs(CH.me.profs) do
-    table.insert(parts, prof .. ":" .. (p.rank or 0) .. ":" .. (p.max or 0) .. ":"
-      .. (p.hash or "") .. ":" .. (p.count or 0))
+    if not profs or profs[prof] then
+      table.insert(parts, prof .. ":" .. (p.rank or 0) .. ":" .. (p.max or 0) .. ":"
+        .. (p.hash or "") .. ":" .. (p.count or 0))
+    end
   end
   return table.concat(parts, "^")
+end
+
+-- Profession preselected for sharing: the open one, else the selected tab
+function CH.DefaultShareProfs()
+  local prof = CH.openProf
+  if not prof and CH.view and CH.view.prof ~= "All" and CH.me.profs[CH.view.prof] then
+    prof = CH.view.prof
+  end
+  if prof and CH.me.profs[prof] then return { [prof] = true } end
 end
 
 local function EncodeEntry(r)
@@ -133,21 +146,38 @@ end
 -- Public functions
 --------------------------------------------------------------------------
 
-function CH.SendKeyTo(name)
+-- profs = { [prof] = true } to share only these, nil = all
+function CH.SendKeyTo(name, profs)
   name = gsub(name or "", "^%s*(.-)%s*$", "%1")
-  if name == "" then return end
+  if name == "" then
+    CH.Print("Type a player name first.")
+    return
+  end
   name = strupper(strsub(name, 1, 1)) .. strlower(strsub(name, 2))
   if CH.Count(CH.me.profs) == 0 then
     CH.Print("Open each of your professions once so CraftHouse can read them.")
     return
   end
+  if profs and CH.Count(profs) == 0 then
+    CH.Print("Select at least one profession.")
+    return
+  end
+  if not CH.shared[name] then CH.shared[name] = {} end
+  local names = {}
+  for prof in pairs(CH.me.profs) do
+    if not profs or profs[prof] then
+      CH.shared[name][prof] = true
+      table.insert(names, prof)
+    end
+  end
+  table.sort(names)
   local route = Route(name)
   if route == "WHISPER" then
-    Send("WHISPER", name, nil, KEY_TEXT .. KeyBody(name))
+    Send("WHISPER", name, nil, KEY_TEXT .. KeyBody(name, profs))
   else
-    Send(route, nil, KeyBody(name))
+    Send(route, nil, KeyBody(name, profs))
   end
-  CH.Print("Sent your recipe key to " .. name .. ".")
+  CH.Print("Shared " .. table.concat(names, ", ") .. " with " .. name .. ".")
 end
 
 function CH.AnnounceGuild(verbose)
@@ -296,19 +326,25 @@ local function Handle(body, from, route)
     -- own alts are read locally, no need to cache them twice
     if CH.db.chars[CH.realm][from] then return end
     local o = OtherEntry(from)
-    o.key, o.keytime, o.route = {}, time(), route
+    -- mode field (1.4+); older keys list the professions from field 4 on
+    local first, partial = 4, false
+    if f[4] == "a" or f[4] == "p" then first, partial = 5, (f[4] == "p") end
+    if not partial or not o.key then o.key = {} end
+    o.keytime, o.route = time(), route
     o.ver = f[2]
-    for i = 4, table.getn(f) do
+    for i = first, table.getn(f) do
       local k = CH.Split(f[i], ":")
-      if k[1] and k[1] ~= "" then
+      if k[1] and k[1] ~= "" and k[2] then
         o.key[k[1]] = { rank = tonumber(k[2]), max = tonumber(k[3]), hash = k[4], count = tonumber(k[5]) }
         local p = o.profs[k[1]]
         if p and p.hash == k[4] then p.rank, p.max = tonumber(k[2]), tonumber(k[3]) end
       end
     end
-    -- forget professions they dropped
-    for prof in pairs(o.profs) do
-      if not o.key[prof] then o.profs[prof] = nil end
+    -- forget professions they dropped (only a full key says that)
+    if not partial then
+      for prof in pairs(o.profs) do
+        if not o.key[prof] then o.profs[prof] = nil end
+      end
     end
     if f[3] == CH.player then
       if CH.RequestUpdate(from) then
@@ -325,7 +361,10 @@ local function Handle(body, from, route)
     for _, prof in ipairs((CH.Split(f[3] or "", ","))) do
       local p = CH.me.profs[prof]
       local key = route .. (target or "") .. prof .. (p and p.hash or "")
-      if not answered[key] or GetTime() - answered[key] > 20 then
+      -- only professions we shared with them (or with the guild)
+      local ok = (CH.shared[from] and CH.shared[from][prof])
+        or (route == "GUILD" and CH.db.settings.guild == 1)
+      if ok and (not answered[key] or GetTime() - answered[key] > 20) then
         answered[key] = GetTime()
         SendProf(route, target, prof)
       end

@@ -11,6 +11,7 @@ local ROWS     = 15
 local ROWH     = 18
 local QROWS    = 9
 local MAXPROFS = 6
+local MAXCATS  = 21
 local QUESTION = "Interface\\Icons\\INV_Misc_QuestionMark"
 local ENCHANT_ICON = "Interface\\Icons\\Spell_Holy_GreaterHeal"
 
@@ -171,7 +172,17 @@ end
 -- Data for the current view
 --------------------------------------------------------------------------
 
+-- view.src: nil = you, a name, or "*" = everyone (global search)
+local function EveryoneData()
+  local profs = {}
+  for _, s in ipairs(CH.Sources()) do
+    for prof in pairs(s.data.profs or {}) do profs[prof] = { recipes = {} } end
+  end
+  return { profs = profs }
+end
+
 local function SrcData()
+  if view.src == "*" then return EveryoneData(), "all" end
   return CH.SourceData(view.src)
 end
 
@@ -216,16 +227,17 @@ local SHORTPROF = {
   ["Jewelcrafting"] = "Jewelcraft", ["First Aid"] = "First Aid",
 }
 
-local function Matches(rec)
+-- ignoreCat: used to count which categories have results
+local function Matches(rec, ignoreCat)
   if view.search ~= "" and not strfind(strlower(rec.n), view.search, 1, true) then return end
   local lvl = rec.l or 0
   if view.lmin and lvl < view.lmin then return end
   if view.lmax and lvl > view.lmax then return end
   if view.q > 0 and (rec.q or 1) < view.q then return end
   if view.stat and ((rec.t and rec.t[view.stat]) or 0) < (view.statMin or 1) then return end
-  if view.cat ~= "All" and rec.c ~= view.cat and rec.sl ~= view.cat then return end
   if view.skill and rec.d and (DIFFORDER[rec.d] or 0) < 2 then return end
-  if view.mats and IsMine() and CH.Available(rec) < 1 then return end
+  if view.mats and rec.owner == CH.player and CH.Available(rec) < 1 then return end
+  if not ignoreCat and view.cat ~= "All" and rec.c ~= view.cat and rec.sl ~= view.cat then return end
   return true
 end
 
@@ -243,18 +255,38 @@ local function Sorter(a, b)
   end
   if (a.l or 0) ~= (b.l or 0) then return (a.l or 0) > (b.l or 0) end
   if (a.q or 1) ~= (b.q or 1) then return (a.q or 1) > (b.q or 1) end
-  return a.n < b.n
+  if a.n ~= b.n then return a.n < b.n end
+  return (a.owner or "") < (b.owner or "")
 end
+
+local catCount = {}
 
 local function BuildResults()
   results = {}
-  local data = SrcData()
-  if not data or not data.profs then return end
-  for prof, p in pairs(data.profs) do
-    if view.prof == "All" or view.prof == prof then
-      for _, rec in ipairs(p.recipes or {}) do
-        rec.prof = prof
-        if Matches(rec) then table.insert(results, rec) end
+  catCount = {}
+  local sources
+  if view.src == "*" then
+    sources = CH.Sources()
+  else
+    local data, kind = SrcData()
+    sources = { { name = view.src or CH.player, kind = kind, data = data } }
+  end
+  for _, s in ipairs(sources) do
+    if s.data and s.data.profs then
+      for prof, p in pairs(s.data.profs) do
+        if view.prof == "All" or view.prof == prof then
+          for _, rec in ipairs(p.recipes or {}) do
+            rec.prof, rec.owner, rec.ownerKind = prof, s.name, s.kind
+            if Matches(rec, true) then
+              local c = rec.c or "Other"
+              catCount[c] = (catCount[c] or 0) + 1
+              if rec.sl and rec.sl ~= c then catCount[rec.sl] = (catCount[rec.sl] or 0) + 1 end
+              if view.cat == "All" or rec.c == view.cat or rec.sl == view.cat then
+                table.insert(results, rec)
+              end
+            end
+          end
+        end
       end
     end
   end
@@ -282,7 +314,7 @@ local function SetTooltipFor(rec)
     if st ~= "" then GameTooltip:AddLine(st, 1, 1, 1, 1) end
     if (rec.l or 0) > 0 then GameTooltip:AddLine("Requires Level " .. rec.l, 1, 1, 1) end
   end
-  GameTooltip:AddLine(rec.prof, 0.6, 0.6, 0.6)
+  GameTooltip:AddLine(rec.prof .. ((rec.owner and rec.owner ~= CH.player) and (" - " .. rec.owner) or ""), 0.6, 0.6, 0.6)
   GameTooltip:Show()
 end
 
@@ -312,11 +344,11 @@ local function CreateRows(parent)
     r.lvl:SetWidth(26); r.lvl:SetJustifyH("CENTER")
     r.stats = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     r.stats:SetPoint("LEFT", r, "LEFT", 242, 0)
-    r.stats:SetWidth(150); r.stats:SetHeight(ROWH); r.stats:SetJustifyH("LEFT")
+    r.stats:SetWidth(118); r.stats:SetHeight(ROWH); r.stats:SetJustifyH("LEFT")
     r.stats:SetTextColor(0.6, 1, 0.6)
     r.avail = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     r.avail:SetPoint("RIGHT", r, "RIGHT", -2, 0)
-    r.avail:SetWidth(30); r.avail:SetJustifyH("RIGHT")
+    r.avail:SetWidth(64); r.avail:SetHeight(ROWH); r.avail:SetJustifyH("RIGHT")
     r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     r:SetScript("OnClick", function()
       local rec = this.rec
@@ -344,7 +376,6 @@ function CH.UpdateList()
   local n = table.getn(results)
   FauxScrollFrame_Update(sf, n, ROWS, ROWH)
   local offset = FauxScrollFrame_GetOffset(sf)
-  local mine = IsMine()
   for i = 1, ROWS do
     local r = ui.rows[i]
     local rec = results[offset + i]
@@ -356,7 +387,10 @@ function CH.UpdateList()
       r.stats:SetText(StatText(rec))
       local d = rec.d and CH.DIFF[rec.d]
       if d then r.diff:SetVertexColor(d[1], d[2], d[3]); r.diff:Show() else r.diff:Hide() end
-      if mine then
+      if view.src == "*" then
+        local col = (rec.owner == CH.player and "|cff20ff20") or (rec.ownerKind == "alt" and "|cff33ffcc") or "|cffffffff"
+        r.avail:SetText(col .. (rec.owner == CH.player and "You" or rec.owner) .. "|r")
+      elseif rec.owner == CH.player then
         local a = CH.Available(rec)
         r.avail:SetText(a > 0 and ("|cff20ff20" .. a .. "|r") or "|cff6666660|r")
       else
@@ -378,7 +412,7 @@ end
 local function UpdateDetails()
   local rec = view.sel
   local d = ui.details
-  local mine = IsMine()
+  local mine = rec and rec.owner == CH.player
   if not rec then
     d.title:SetText("|cff888888Select a recipe. Right-click adds it to the queue.|r")
     d.reag:SetText("")
@@ -388,12 +422,13 @@ local function UpdateDetails()
   end
   d.icon:SetTexture(RecIcon(rec)); d.icon:Show()
   local extra = (rec.l or 0) > 0 and ("  |cffaaaaaaLevel " .. rec.l .. "|r") or ""
-  d.title:SetText(CH.Color(rec.q) .. rec.n .. "|r" .. extra .. "  |cff888888" .. (rec.prof or "") .. "|r")
+  local who = mine and "" or (" - " .. (rec.owner or "?"))
+  d.title:SetText(CH.Color(rec.q) .. rec.n .. "|r" .. extra .. "  |cff888888" .. (rec.prof or "") .. who .. "|r")
   local bags = CH.BagCounts()
   local lines = {}
   for _, r in ipairs(rec.r or {}) do
     local name = r[3] or ItemName(r[1])
-    if IsMine() then
+    if mine then
       local have = (r[1] and r[1] > 0) and bags[r[1]] or bags["n:" .. (r[3] or "")] or 0
       local col = have >= r[2] and "|cff20ff20" or "|cffff4040"
       table.insert(lines, col .. have .. "/" .. r[2] .. "|r " .. name)
@@ -414,9 +449,8 @@ local function UpdateDetails()
     d.all:SetText("All (" .. a .. ")")
     if CH.openProf == rec.prof then d.craft:SetText("Craft") else d.craft:SetText("Open + Craft") end
   else
-    local _, kind = SrcData()
     d.craft:Hide(); d.all:Hide(); d.queue:Show(); d.num:Show()
-    if kind == "other" then d.ask:Show() else d.ask:Hide() end
+    if rec.ownerKind == "other" then d.ask:Show() else d.ask:Hide() end
     d.queue:SetText("+ To-do list")
   end
 end
@@ -443,12 +477,13 @@ CH.CurrentList = CurrentList
 -- Right-click / "+ Queue": own recipes go to the own queue, another
 -- player's recipes to the to-do list for that player.
 function CH.AddToList(rec, count)
-  if IsMine() then
+  local owner = rec.owner or view.src or CH.player
+  if owner == CH.player then
     if view.list and view.list.kind == "out" then view.list = nil end
     CH.QueueAdd(rec, count)
   else
-    view.list = { kind = "out", name = view.src }
-    CH.QueueAdd(rec, count, CH.OutList(view.src))
+    view.list = { kind = "out", name = owner }
+    CH.QueueAdd(rec, count, CH.OutList(owner))
   end
 end
 
@@ -531,7 +566,8 @@ local function UpdateHeader()
   local data, kind = SrcData()
   local name = view.src or CH.player
   local label = name
-  if kind == "me" then label = name .. " (you)" elseif kind == "alt" then label = name .. " |cff33ffcc(alt)|r" end
+  if kind == "me" then label = name .. " (you)" elseif kind == "alt" then label = name .. " |cff33ffcc(alt)|r"
+  elseif kind == "all" then label = "|cffffd100Everyone|r" end
   ui.srcBtn:SetText(label)
 
   local profs = {}
@@ -546,7 +582,7 @@ local function UpdateHeader()
     if prof == "All" then return "All" end
     local p = data.profs[prof]
     local n = (style > 1) and (SHORTPROF[prof] or prof) or prof
-    if style > 2 then return n end
+    if style > 2 or not p.rank then return n end
     return n .. " |cffaaaaaa" .. (p.rank or "?") .. "|r"
   end
   local avail = W - 18 - 156
@@ -589,6 +625,9 @@ local function UpdateHeader()
     ui.forget:Show()
   else
     if kind == "alt" then ui.forget:Show() else ui.forget:Hide() end
+    if kind == "all" then
+      info = "Everyone: you, your alts and players who shared with you. The right column shows who can craft it."
+    end
     if kind == "me" and CH.openProf then
       info = "|cff20ff20" .. CH.openProf .. " open|r"
     elseif kind == "me" and CH.Count(CH.me.profs) == 0 then
@@ -599,9 +638,47 @@ local function UpdateHeader()
   ui.info:SetText(info)
 end
 
+-- Shows only the categories that have results (count in brackets)
+local function UpdateCats()
+  local list = { "All" }
+  local known = {}
+  for _, c in ipairs(CH.CATEGORIES) do
+    known[c] = true
+    if c ~= "All" and catCount[c] then table.insert(list, c) end
+  end
+  local extra = {}
+  for c in pairs(catCount) do
+    if not known[c] then table.insert(extra, c) end
+  end
+  table.sort(extra)
+  for _, c in ipairs(extra) do table.insert(list, c) end
+  local total = 0
+  for _, n in pairs(catCount) do total = total + n end
+  for i = 1, MAXCATS do
+    local b = ui.catBtns[i]
+    local c = list[i]
+    b.cat = c
+    if c then
+      local n = (c == "All") and table.getn(results) or catCount[c]
+      if c == "All" and view.cat ~= "All" then n = nil end
+      b.text:SetText(c .. (n and (" |cff888888" .. n .. "|r") or ""))
+      if view.cat == c then b:LockHighlight() else b:UnlockHighlight() end
+      b:Show()
+    else
+      b:Hide()
+    end
+  end
+end
+
 function CH.Refresh()
   if not main or not main:IsShown() then return end
   BuildResults()
+  -- the selected category may not exist in this profession
+  if view.cat ~= "All" and not catCount[view.cat] then
+    view.cat = "All"
+    BuildResults()
+  end
+  UpdateCats()
   -- keep the selection only if it is still in the source
   if view.sel then
     local found
@@ -675,7 +752,7 @@ local function Build()
 
   -- Row 1: source and professions
   ui.srcBtn = Button(main, "", 18, -36, 130, 22, function()
-    local items = {}
+    local items = { { text = "|cffffd100Everyone|r (search all)", value = "*", checked = view.src == "*" } }
     for _, s in ipairs(CH.Sources()) do
       local label = s.name
       if s.kind == "me" then label = label .. " (you)"
@@ -690,8 +767,8 @@ local function Build()
       view.src = name
       view.prof = "All"
       view.sel = nil
-      local _, kind = CH.SourceData(name)
-      if kind ~= "me" then
+      local _, kind = SrcData()
+      if kind == "other" or kind == "alt" then
         view.list = { kind = "out", name = name }
       elseif view.list and view.list.kind == "out" then
         view.list = nil
@@ -699,6 +776,11 @@ local function Build()
       CH.watching = (kind == "other") and name or nil
       if kind == "other" and CH.others[name] and CH.others[name].route ~= "WHISPER" then
         CH.RequestUpdate(name)
+      end
+      if kind == "all" then
+        for oname, o in pairs(CH.others) do
+          if o.route and o.route ~= "WHISPER" and CH.IsOutdated(oname) then CH.RequestUpdate(oname) end
+        end
       end
       CH.Refresh()
     end)
@@ -717,7 +799,7 @@ local function Build()
     b:SetScript("OnEnter", function()
       local data = SrcData()
       local p = this.prof and data and data.profs and data.profs[this.prof]
-      if not p then return end
+      if not p or not p.rank then return end
       GameTooltip:SetOwner(this, "ANCHOR_BOTTOM")
       GameTooltip:SetText(this.prof .. "  " .. (p.rank or "?") .. "/" .. (p.max or "?"), 1, 1, 1)
       GameTooltip:AddLine(table.getn(p.recipes or {}) .. " recipes", 0.7, 0.7, 0.7)
@@ -793,24 +875,18 @@ local function Build()
   -- Left: categories
   local cats = Panel(main, 16, -92, 112, 400)
   ui.catBtns = {}
-  for i, cat in ipairs(CH.CATEGORIES) do
+  for i = 1, MAXCATS do
     local b = CreateFrame("Button", nil, cats)
-    b:SetHeight(20)
-    b:SetPoint("TOPLEFT", cats, "TOPLEFT", 5, -5 - (i - 1) * 20)
+    b:SetHeight(18)
+    b:SetPoint("TOPLEFT", cats, "TOPLEFT", 5, -5 - (i - 1) * 18)
     b:SetPoint("RIGHT", cats, "RIGHT", -5, 0)
     b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
     b.text = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     b.text:SetPoint("LEFT", b, "LEFT", 6, 0)
-    b.text:SetText(cat)
-    b.cat = cat
     b:SetScript("OnClick", function()
       view.cat = this.cat
-      for _, o in ipairs(ui.catBtns) do
-        if o.cat == view.cat then o:LockHighlight() else o:UnlockHighlight() end
-      end
       CH.Refresh()
     end)
-    if cat == "All" then b:LockHighlight() end
     ui.catBtns[i] = b
   end
 
@@ -855,7 +931,7 @@ local function Build()
   d.ask = Button(d, "Ask to craft", 340, -25, 104, 22, function()
     local rec = view.sel
     if not rec then return end
-    local text = "/w " .. view.src .. " Hi! Could you craft " .. (rec.n) .. " for me?"
+    local text = "/w " .. (rec.owner or "") .. " Hi! Could you craft " .. (rec.n) .. " for me?"
     if ChatFrame_OpenChat then
       ChatFrame_OpenChat(text)
     else
@@ -977,10 +1053,10 @@ local function Build()
   local st = Text(s, "GameFontNormalSmall", 8, -6); st:SetText("Share with player")
   ui.shareName = EditBox(s, 8, -20, 100)
   ui.shareName:SetScript("OnEnterPressed", function()
-    this:ClearFocus(); CH.SendKeyTo(this:GetText())
+    this:ClearFocus(); CH.ShareMenu(this)
   end)
-  local sendBtn = Button(s, "Send", 112, -19, 54, 22, function() CH.SendKeyTo(ui.shareName:GetText()) end)
-  Tip(sendBtn, "Send your recipe key to this player. If they use CraftHouse, they load your recipes and can browse them.")
+  local sendBtn = Button(s, "Send", 112, -19, 54, 22, function() CH.ShareMenu(this) end)
+  Tip(sendBtn, "Choose which professions to share with this player. If they use CraftHouse, they load those recipes and can browse them.")
   local gBtn = Button(s, "Guild", 170, -19, 58, 22, function() CH.AnnounceGuild(true) end)
   Tip(gBtn, "Share your key with your guild. Guild members load your recipes when they look at you.")
   ui.sendState = Text(s, "GameFontDisableSmall", 8, -46, 220)
@@ -1043,6 +1119,72 @@ end
 
 function CH.OnScanned(prof)
   if CH.OnRecipesChanged then CH.OnRecipesChanged() end
+end
+
+--------------------------------------------------------------------------
+-- Share popup: pick the professions (default: the open / selected one)
+--------------------------------------------------------------------------
+
+local share
+local SHAREMAX = 8
+
+function CH.ShareMenu(anchor)
+  local name = ui.shareName:GetText()
+  if not name or gsub(name, "%s", "") == "" then
+    CH.Print("Type a player name first.")
+    return
+  end
+  if CH.Count(CH.me.profs) == 0 then
+    CH.Print("Open each of your professions once so CraftHouse can read them.")
+    return
+  end
+  if not share then
+    share = CreateFrame("Frame", "CraftHouseShare", main)
+    share:SetFrameStrata("FULLSCREEN_DIALOG")
+    share:SetBackdrop(PANEL)
+    share:SetBackdropColor(0, 0, 0, 0.95)
+    share:EnableMouse(true)
+    share:SetWidth(180)
+    share.title = Text(share, "GameFontNormalSmall", 10, -8, 160)
+    share.checks = {}
+    for i = 1, SHAREMAX do
+      share.checks[i] = Check(share, "", 8, -22 - (i - 1) * 22, function() end)
+    end
+    share.send = Button(share, "Send", 10, 0, 76, 20, function()
+      local profs = {}
+      for _, c in ipairs(share.checks) do
+        if c:IsShown() and c:GetChecked() then profs[c.prof] = true end
+      end
+      share:Hide()
+      CH.SendKeyTo(ui.shareName:GetText(), profs)
+    end)
+    share.cancel = Button(share, "Cancel", 92, 0, 76, 20, function() share:Hide() end)
+  end
+  local profs = {}
+  for prof in pairs(CH.me.profs) do table.insert(profs, prof) end
+  table.sort(profs)
+  local default = CH.DefaultShareProfs()
+  local n = math.min(table.getn(profs), SHAREMAX)
+  for i = 1, SHAREMAX do
+    local c = share.checks[i]
+    if i <= n then
+      c.prof = profs[i]
+      getglobal(c:GetName() .. "Text"):SetText(profs[i] .. " |cffaaaaaa" .. (CH.me.profs[profs[i]].rank or "") .. "|r")
+      c:SetChecked((not default or default[profs[i]]) and 1 or nil)
+      c:Show()
+    else
+      c:Hide()
+    end
+  end
+  share.title:SetText("Share with " .. ui.shareName:GetText() .. ":")
+  share.send:ClearAllPoints()
+  share.send:SetPoint("TOPLEFT", share, "TOPLEFT", 10, -26 - n * 22)
+  share.cancel:ClearAllPoints()
+  share.cancel:SetPoint("TOPLEFT", share, "TOPLEFT", 92, -26 - n * 22)
+  share:SetHeight(56 + n * 22)
+  share:ClearAllPoints()
+  share:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 4)
+  share:Show()
 end
 
 function CH.OnForget(name)
