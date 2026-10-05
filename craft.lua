@@ -120,6 +120,35 @@ local function FindIndex(name, isCraft)
   end
 end
 
+-- Names of required tools/places that are missing right now, or nil.
+-- Get*Tools returns pairs: name, available, name, available, ...
+function CH.MissingTools(idx, isCraft)
+  local fn = isCraft and GetCraftSpellFocus or GetTradeSkillTools
+  if not fn then return end
+  local t = { fn(idx) }
+  local missing = {}
+  local i = 1
+  while t[i] do
+    if not t[i + 1] then table.insert(missing, t[i]) end
+    i = i + 2
+  end
+  if table.getn(missing) > 0 then return table.concat(missing, ", ") end
+end
+
+-- Names of all required tools/places (for the details panel)
+function CH.ToolNames(idx, isCraft)
+  local fn = isCraft and GetCraftSpellFocus or GetTradeSkillTools
+  if not fn then return end
+  local t = { fn(idx) }
+  local names = {}
+  local i = 1
+  while t[i] do
+    table.insert(names, t[i])
+    i = i + 2
+  end
+  if table.getn(names) > 0 then return table.concat(names, ", ") end
+end
+
 -- rec must be one of our own recipes (rec.prof set by the browser)
 function CH.Craft(rec, count, queueEntry)
   local prof = rec.prof
@@ -142,6 +171,14 @@ function CH.Craft(rec, count, queueEntry)
   local idx = FindIndex(rec.n, CH.openCraft)
   if not idx then
     CH.Print(rec.n .. " not found in " .. prof .. ".")
+    return
+  end
+
+  -- Tools / places like a Cooking Fire or an Anvil: tell instead of failing
+  local missing = CH.MissingTools(idx, CH.openCraft)
+  if missing then
+    CH.Print(rec.n .. " needs: " .. missing .. ".")
+    UIErrorsFrame:AddMessage("Requires " .. missing, 1, 0.1, 0.1, 1, 3)
     return
   end
 
