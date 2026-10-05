@@ -367,6 +367,17 @@ check(A.eval('CraftHouse.view.sel and CraftHouse.view.sel.n') == 'Mystic Robe', 
 A.execute('TS.line[2] = 151; Fire("TRADE_SKILL_UPDATE"); Tick(0.2, 3)')
 check(A.eval('SCANS') == 1 and A.eval('CraftHouse.view.sel and CraftHouse.view.sel.n') == 'Mystic Robe', "skill-up rescans once and keeps the selection")
 
+# missing tool (e.g. no Cooking Fire nearby): no craft call, clear message
+A.execute('''UIErrorsFrame = CreateFrame("Frame", "UIErrorsFrame")
+GetTradeSkillTools = function(i) return "Cooking Fire", nil end
+DONE = nil
+local robe = CraftHouse.view.sel
+CraftHouse.Craft(robe, 1)''')
+check(A.eval('DONE') is None and 'needs: Cooking Fire' in list(A.eval('OUT').values())[-1], "missing Cooking Fire blocks the craft with a message")
+A.execute('GetTradeSkillTools = function(i) return "Cooking Fire", 1 end; CraftHouse.Craft(CraftHouse.view.sel, 1)')
+check(A.eval('DONE') is not None, "with the fire nearby it crafts")
+A.execute('GetTradeSkillTools = nil')
+
 print("\n%d failures" % fails)
 print("--- Henry chat:")
 print("\n".join(list(A.eval('OUT').values())[-4:]))
