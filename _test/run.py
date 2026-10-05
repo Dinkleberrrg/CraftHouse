@@ -353,6 +353,20 @@ check("Whisperguy:whisper" in sug and "Friendo:friend" in sug and "Altie:your al
 sug = A.eval('(function() local t = {} for _, x in ipairs(CraftHouse.NameSuggestions("fr")) do table.insert(t, x.name) end return table.concat(t, ",") end)()')
 check(sug == "Friendo", "suggestions filter by typed prefix")
 
+# selection survives profession updates (regression: click deselected itself)
+A.execute('''TS.list = { TS.list[1], TS.list[2], TS.list[3] }
+Fire("TRADE_SKILL_SHOW"); Tick(0.1, 2)
+CraftHouse.Show(); CraftHouse.view.prof = "Tailoring"; CraftHouse.view.cat = "All"; CraftHouse.view.stat = nil; CraftHouse.Refresh()
+for _, o in ipairs(ALL) do if o.rec and o.shown and o.rec.n == "Mystic Robe" then this = o; arg1 = "LeftButton"; o.scripts.OnClick() end end
+SCANS = 0
+local orig = CraftHouse.ScanTradeSkill
+CraftHouse.ScanTradeSkill = function() SCANS = SCANS + 1; orig() end
+for i = 1, 5 do Fire("TRADE_SKILL_UPDATE"); Tick(0.2, 3) end''')
+check(A.eval('SCANS') == 0, "update events without changes do not rescan")
+check(A.eval('CraftHouse.view.sel and CraftHouse.view.sel.n') == 'Mystic Robe', "selection kept after update events")
+A.execute('TS.line[2] = 151; Fire("TRADE_SKILL_UPDATE"); Tick(0.2, 3)')
+check(A.eval('SCANS') == 1 and A.eval('CraftHouse.view.sel and CraftHouse.view.sel.n') == 'Mystic Robe', "skill-up rescans once and keeps the selection")
+
 print("\n%d failures" % fails)
 print("--- Henry chat:")
 print("\n".join(list(A.eval('OUT').values())[-4:]))
