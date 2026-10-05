@@ -58,31 +58,34 @@ CH.On("TRADE_SKILL_SHOW", function() OnProfOpened(false) end)
 CH.On("CRAFT_SHOW", function() OnProfOpened(true) end)
 
 -- Rescan when skill ranks or recipes change (skill-up, new recipe)
-CH.On("TRADE_SKILL_UPDATE", function()
-  if CH.openProf and not CH.openCraft and not CH.rescan then
-    CH.rescan = true
-    CH.After(0.3, function()
-      CH.rescan = nil
-      if CH.openProf and not CH.openCraft then
-        CH.ScanTradeSkill()
-        if CH.IsShown() then CH.Refresh() end
-      end
-    end)
+-- The *_UPDATE events also fire for our own scan (expanding headers) and
+-- for every bag change. Rescan only when rank or recipe count changed,
+-- otherwise the scan would loop and the selection would get lost.
+local function Signature(isCraft)
+  if isCraft then
+    local _, rank = GetCraftDisplaySkillLine()
+    return (rank or 0) .. ":" .. GetNumCrafts()
   end
-end)
+  local _, rank = GetTradeSkillLine()
+  return (rank or 0) .. ":" .. GetNumTradeSkills()
+end
 
-CH.On("CRAFT_UPDATE", function()
-  if CH.openProf and CH.openCraft and not CH.rescan then
-    CH.rescan = true
-    CH.After(0.3, function()
-      CH.rescan = nil
-      if CH.openProf and CH.openCraft then
-        CH.ScanCraft()
-        if CH.IsShown() then CH.Refresh() end
-      end
-    end)
-  end
-end)
+local function Rescan(isCraft)
+  if not CH.openProf or (CH.openCraft and true or false) ~= isCraft or CH.rescan then return end
+  CH.rescan = true
+  CH.After(0.3, function()
+    CH.rescan = nil
+    if not CH.openProf or (CH.openCraft and true or false) ~= isCraft then return end
+    local p = CH.me.profs[CH.openProf]
+    if p and p.sig == Signature(isCraft) then return end
+    if isCraft then CH.ScanCraft() else CH.ScanTradeSkill() end
+    if CH.IsShown() then CH.Refresh() end
+  end)
+end
+
+CH.On("TRADE_SKILL_UPDATE", function() Rescan(false) end)
+CH.On("CRAFT_UPDATE", function() Rescan(true) end)
+CH.Signature = Signature
 
 local function OnProfClosed()
   CH.openProf = nil

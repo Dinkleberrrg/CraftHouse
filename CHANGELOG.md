@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.5.1
+- Fix: a selected recipe got deselected right away while the profession was open. The profession update events (also fired by CraftHouse itself and by bag changes) triggered a rescan loop that replaced every recipe; now it only rescans when rank or recipe count changes, and the selection is kept by name.
+
 ## 1.5.0
 - Level and skill-up colour are separate sort keys: Skill-up sorts by colour, clicking Lvl sorts by level (again: reverse).
 - Empty received lists disappear; sent to-do lists are removed from your drafts; lists for/from others have a Delete button.
