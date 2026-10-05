@@ -691,11 +691,14 @@ function CH.Refresh()
     BuildResults()
   end
   UpdateCats()
-  -- keep the selection only if it is still in the source
+  -- keep the selection if it is still listed; after a rescan the recipe
+  -- is a new table, so match by name, profession and owner
   if view.sel then
-    local found
-    for _, r in ipairs(results) do if r == view.sel then found = true; break end end
-    if not found then view.sel = nil end
+    local s, found = view.sel
+    for _, r in ipairs(results) do
+      if r == s or (r.n == s.n and r.prof == s.prof and r.owner == s.owner) then found = r; break end
+    end
+    view.sel = found
   end
   UpdateHeader()
   CH.UpdateList()

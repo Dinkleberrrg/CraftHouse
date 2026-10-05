@@ -167,6 +167,7 @@ local function FinishProf(prof, rank, max, recipes, isCraft)
   p.hash = CH.Hash(table.concat(keys, ";"))
   p.craft = isCraft and 1 or nil
   p.time = time()
+  p.sig = CH.Signature and CH.Signature(isCraft)
   CH.me.profs[prof] = p
   CH.openProf = prof
   CH.openCraft = isCraft
