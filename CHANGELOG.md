@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.5.3
+- Clearer craft buttons: Amount, then Craft and + Queue side by side, then Craft all (n). No more Open + Craft label; Craft opens a closed profession on its own.
+
 ## 1.5.2
 - Required tools/places (Cooking Fire, Anvil, Forge, ...) are checked before crafting: a clear message instead of a failed cast. The details show what a recipe needs.
 

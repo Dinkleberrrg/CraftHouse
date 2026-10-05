@@ -428,7 +428,7 @@ local function UpdateDetails()
     d.title:SetText("|cff888888Select a recipe. Right-click adds it to the queue.|r")
     d.reag:SetText("")
     d.icon:Hide()
-    d.craft:Hide(); d.all:Hide(); d.queue:Hide(); d.num:Hide(); d.ask:Hide()
+    d.craft:Hide(); d.all:Hide(); d.queue:Hide(); d.num:Hide(); d.ask:Hide(); d.amount:Hide()
     return
   end
   d.icon:SetTexture(RecIcon(rec)); d.icon:Show()
@@ -460,12 +460,13 @@ local function UpdateDetails()
     d.craft:Show(); d.all:Show(); d.queue:Show(); d.num:Show(); d.ask:Hide()
     d.queue:SetText("+ Queue")
     local a = CH.Available(rec)
-    d.all:SetText("All (" .. a .. ")")
-    if CH.openProf == rec.prof then d.craft:SetText("Craft") else d.craft:SetText("Open + Craft") end
+    d.all:SetText("Craft all (" .. a .. ")")
+    d.amount:Show()
   else
     d.craft:Hide(); d.all:Hide(); d.queue:Show(); d.num:Show()
     if rec.ownerKind == "other" then d.ask:Show() else d.ask:Hide() end
-    d.queue:SetText("+ To-do list")
+    d.queue:SetText("+ To-do")
+    d.amount:Show()
   end
 end
 
@@ -935,18 +936,24 @@ local function Build()
   d.title = Text(d, "GameFontHighlight", 40, -8, 400)
   d.title:SetHeight(16)
   d.reag = Text(d, "GameFontHighlightSmall", 40, -26, 250)
-  d.num = EditBox(d, 300, -26, 34, true)
+  -- Amount [n]  /  [Craft] [+ Queue]  /  [Craft all (n)]
+  d.amount = Text(d, "GameFontNormalSmall", 300, -30)
+  d.amount:SetText("Amount")
+  d.num = EditBox(d, 352, -26, 40, true)
   d.num:SetText("1")
-  d.craft = Button(d, "Craft", 340, -25, 104, 22, function()
+  d.craft = Button(d, "Craft", 300, -48, 70, 22, function()
     if view.sel then CH.Craft(view.sel, tonumber(d.num:GetText()) or 1) end
   end)
-  d.all = Button(d, "All", 340, -48, 104, 22, function()
-    if view.sel then CH.Craft(view.sel, math.max(1, CH.Available(view.sel))) end
-  end)
-  d.queue = Button(d, "+ Queue", 300, -71, 144, 22, function()
+  Tip(d.craft, "Craft the amount above. If the profession is closed, CraftHouse opens it for you.")
+  d.queue = Button(d, "+ Queue", 374, -48, 70, 22, function()
     if view.sel then CH.AddToList(view.sel, tonumber(d.num:GetText()) or 1) end
   end)
-  d.ask = Button(d, "Ask to craft", 340, -25, 104, 22, function()
+  Tip(d.queue, "Add the amount above to the list (your queue, or the to-do list for the crafter).")
+  d.all = Button(d, "Craft all", 300, -71, 144, 22, function()
+    if view.sel then CH.Craft(view.sel, math.max(1, CH.Available(view.sel))) end
+  end)
+  Tip(d.all, "Craft as many as your bags allow.")
+  d.ask = Button(d, "Ask to craft", 300, -71, 144, 22, function()
     local rec = view.sel
     if not rec then return end
     local text = "/w " .. (rec.owner or "") .. " Hi! Could you craft " .. (rec.n) .. " for me?"
