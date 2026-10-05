@@ -197,6 +197,7 @@ function CH.ScanTradeSkill()
         mk = GetTradeSkillNumMade(i), r = {},
       }
       if rec.mk == 1 then rec.mk = nil end
+      rec.tools = CH.ToolNames and CH.ToolNames(i)
       for j = 1, GetTradeSkillNumReagents(i) do
         local rname, _, rcount = GetTradeSkillReagentInfo(i, j)
         local rid = CH.ItemID(GetTradeSkillReagentItemLink(i, j))

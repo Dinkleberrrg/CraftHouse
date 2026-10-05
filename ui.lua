@@ -452,6 +452,9 @@ local function UpdateDetails()
     while table.getn(lines) > 4 do table.remove(lines) end
     table.insert(lines, "|cff888888+" .. more .. " more|r")
   end
+  if rec.tools then
+    table.insert(lines, 1, "|cffffd100Needs: " .. rec.tools .. "|r")
+  end
   d.reag:SetText(table.concat(lines, "\n"))
   if mine then
     d.craft:Show(); d.all:Show(); d.queue:Show(); d.num:Show(); d.ask:Hide()

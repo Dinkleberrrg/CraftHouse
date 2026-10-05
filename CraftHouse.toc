@@ -2,7 +2,7 @@
 ## Title: |cff33ffccCraft|cffffffffHouse
 ## Notes: Auction-house style profession browser: search by level and stats, skill-up mode, crafting queue, and recipe sharing with other CraftHouse users.
 ## Author: Dinkleberrrg
-## Version: 1.5.1
+## Version: 1.5.2
 ## SavedVariables: CraftHouseDB
 
 core.lua

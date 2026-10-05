@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.5.2
+- Required tools/places (Cooking Fire, Anvil, Forge, ...) are checked before crafting: a clear message instead of a failed cast. The details show what a recipe needs.
+
 ## 1.5.1
 - Fix: a selected recipe got deselected right away while the profession was open. The profession update events (also fired by CraftHouse itself and by bag changes) triggered a rescan loop that replaced every recipe; now it only rescans when rank or recipe count changes, and the selection is kept by name.
 
