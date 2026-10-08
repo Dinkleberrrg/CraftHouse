@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.0
+- Fix: sharing by whisper left the receiver with an empty player. The server chat limit (You must wait N seconds before speaking again) dropped most whispers. Now whispers go out slower, CraftHouse pauses and resends when the limit hits (and hides that message), recipe lists come in numbered chunks, and the receiver asks again for missing chunks or a lost request.
+- Keys with many professions are split so no whisper exceeds 255 characters.
+- Protocol change: both players need 1.6.0.
+
 ## 1.5.3
 - Clearer craft buttons: Amount, then Craft and + Queue side by side, then Craft all (n). No more Open + Craft label; Craft opens a closed profession on its own.
 
