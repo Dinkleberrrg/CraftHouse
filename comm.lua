@@ -17,8 +17,9 @@
             key; target = player it was sent to, "" = announcement;
             mode a = all professions, p = only the listed ones
        Q^<target>^<prof>,<prof>         request recipe lists from target
-       P^<prof>^<rank>^<max>^<hash>^<count>^<craft>   start of a list
-       E^<prof>^<entry>~<entry>~...     recipes
+       P^<prof>^<rank>^<max>^<hash>^<count>^<craft>^<chunks>   start of a list
+       E^<prof>^<n>^<entry>~<entry>~... recipes, chunk n of <chunks>
+       R^<target>^<prof>^<hash>^<n>,<n> resend missing chunks
        O^<target>^<id>^<part>^<parts>^<prof;name;count>~...   to-do list
      entry: id;quality;level;category;stats;reagents;name;made
        stats    "int=5/sta=3"
@@ -27,10 +28,14 @@
 
 local CH = CraftHouse
 
-local MAX_MSG    = 225
-local SEND_DELAY = 0.35
+local MAX_MSG    = 235
+local SEND_DELAY = 0.35   -- addon messages
+-- Whispers count as chat: the server mutes you for some seconds when too
+-- many go out ("You must wait N seconds before speaking again"). We start
+-- slow, back off when that message shows up and resend what got dropped.
+local WHISPER_DELAY = 1.2
 local WHISPER_TAG = "[CH]"
-local KEY_TEXT = "[CraftHouse] I shared my recipes with you (needs the CraftHouse addon). #"
+local KEY_TEXT = "[CraftHouse] Shared my recipes (CraftHouse addon) #"
 local LIST_TEXT = "[CraftHouse] I sent you a to-do list (needs the CraftHouse addon). #"
 
 --------------------------------------------------------------------------
@@ -40,17 +45,69 @@ local LIST_TEXT = "[CraftHouse] I sent you a to-do list (needs the CraftHouse ad
 local queue = {}
 local sender = CreateFrame("Frame")
 sender.next = 0
+sender.whisperDelay = WHISPER_DELAY
 sender:SetScript("OnUpdate", function()
   if table.getn(queue) == 0 or GetTime() < sender.next then return end
   local m = table.remove(queue, 1)
   if m.route == "WHISPER" then
     SendChatMessage((m.raw or (WHISPER_TAG .. m.body)), "WHISPER", nil, m.target)
+    sender.lastWhisper, sender.lastWhisperTime = m, GetTime()
+    sender.next = GetTime() + sender.whisperDelay
   else
     SendAddonMessage(CH.prefix, m.body, m.route)
+    sender.next = GetTime() + SEND_DELAY
   end
-  sender.next = GetTime() + SEND_DELAY
   if CH.OnSendProgress then CH.OnSendProgress(table.getn(queue)) end
 end)
+
+-- "You must wait 9 Seconds before speaking again." -> pause, resend
+local function ChatLimited(text)
+  if not text then return end
+  local _, _, sec = strfind(strlower(text), "must wait (%d+) seconds? before speaking")
+  return tonumber(sec)
+end
+CH.ChatLimited = ChatLimited
+
+function CH.SetWhisperDelay(d) sender.whisperDelay = d end
+
+function CH.SlowerWhispers()
+  sender.whisperDelay = math.min(4, sender.whisperDelay + 0.5)
+end
+
+local function OnChatLimit(sec)
+  -- the same message can arrive through several events
+  if sender.limitAt and GetTime() - sender.limitAt < 1 then return end
+  sender.limitAt = GetTime()
+  local m = sender.lastWhisper
+  if m and GetTime() - (sender.lastWhisperTime or 0) < 3 and queue[1] ~= m then
+    table.insert(queue, 1, m)
+  end
+  sender.next = GetTime() + sec + 0.5
+  sender.whisperDelay = math.min(4, sender.whisperDelay + 0.8)
+  if not sender.warned then
+    sender.warned = true
+    CH.Print("Server chat limit reached, sharing continues more slowly.")
+  end
+end
+
+local function CheckLimit(text)
+  local sec = ChatLimited(text)
+  if sec and sender.lastWhisper and GetTime() - (sender.lastWhisperTime or 0) < 5 then
+    OnChatLimit(sec)
+    return true
+  end
+end
+CH.On("CHAT_MSG_SYSTEM", function(text) CheckLimit(text) end)
+CH.On("UI_ERROR_MESSAGE", function(text) CheckLimit(text) end)
+
+-- Hide that red message while CraftHouse itself is whispering
+if UIErrorsFrame and UIErrorsFrame.AddMessage then
+  local origAdd = UIErrorsFrame.AddMessage
+  UIErrorsFrame.AddMessage = function(self, text, a, b, c, d, e)
+    if CheckLimit(text) then return end
+    return origAdd(self, text, a, b, c, d, e)
+  end
+end
 
 local function Send(route, target, body, raw)
   table.insert(queue, { route = route, target = target, body = body, raw = raw })
@@ -89,15 +146,29 @@ end
 --------------------------------------------------------------------------
 
 -- profs = { [prof] = true } to share only some, nil = all
-local function KeyBody(target, profs)
-  local parts = { "K", CH.version, target or "", profs and "p" or "a" }
+-- Returns one or more key messages, each at most maxLen long. If the key
+-- needs several messages, all are partial ("p") so none wipes the others.
+local function KeyBodies(target, profs, maxLen)
+  local entries = {}
   for prof, p in pairs(CH.me.profs) do
     if not profs or profs[prof] then
-      table.insert(parts, prof .. ":" .. (p.rank or 0) .. ":" .. (p.max or 0) .. ":"
+      table.insert(entries, prof .. ":" .. (p.rank or 0) .. ":" .. (p.max or 0) .. ":"
         .. (p.hash or "") .. ":" .. (p.count or 0))
     end
   end
-  return table.concat(parts, "^")
+  local function Head(mode) return "K^" .. CH.version .. "^" .. (target or "") .. "^" .. mode end
+  local whole = Head(profs and "p" or "a") .. "^" .. table.concat(entries, "^")
+  if strlen(whole) <= maxLen then return { whole } end
+  local out, cur = {}, Head("p")
+  for _, e in ipairs(entries) do
+    if cur ~= Head("p") and strlen(cur) + 1 + strlen(e) > maxLen then
+      table.insert(out, cur)
+      cur = Head("p")
+    end
+    cur = cur .. "^" .. e
+  end
+  table.insert(out, cur)
+  return out
 end
 
 -- Profession preselected for sharing: the open one, else the selected tab
@@ -124,22 +195,35 @@ local function EncodeEntry(r)
     .. gsub(r.n, "[;~%^]", "") .. ";" .. (r.mk or 1)
 end
 
-local function SendProf(route, target, prof)
+-- Splits a profession into numbered chunks (same result every time)
+local function Chunks(prof)
   local p = CH.me.profs[prof]
-  if not p then return end
-  Send(route, target, "P^" .. prof .. "^" .. (p.rank or 0) .. "^" .. (p.max or 0) .. "^"
-    .. (p.hash or "") .. "^" .. (p.count or 0) .. "^" .. (p.craft or 0))
-  local head = "E^" .. prof .. "^"
-  local blob = ""
+  local chunks, blob = {}, ""
+  local head = "E^" .. prof .. "^999^"
   for _, r in ipairs(p.recipes) do
     local e = EncodeEntry(r)
     if blob ~= "" and strlen(head) + strlen(blob) + 1 + strlen(e) > MAX_MSG then
-      Send(route, target, head .. blob)
+      table.insert(chunks, blob)
       blob = ""
     end
     blob = (blob == "") and e or (blob .. "~" .. e)
   end
-  if blob ~= "" then Send(route, target, head .. blob) end
+  if blob ~= "" or table.getn(chunks) == 0 then table.insert(chunks, blob) end
+  return chunks
+end
+
+-- only = { [n] = true } resends just those chunks
+local function SendProf(route, target, prof, only)
+  local p = CH.me.profs[prof]
+  if not p then return end
+  local chunks = Chunks(prof)
+  if not only then
+    Send(route, target, "P^" .. prof .. "^" .. (p.rank or 0) .. "^" .. (p.max or 0) .. "^"
+      .. (p.hash or "") .. "^" .. (p.count or 0) .. "^" .. (p.craft or 0) .. "^" .. table.getn(chunks))
+  end
+  for i, c in ipairs(chunks) do
+    if not only or only[i] then Send(route, target, "E^" .. prof .. "^" .. i .. "^" .. c) end
+  end
 end
 
 --------------------------------------------------------------------------
@@ -173,9 +257,11 @@ function CH.SendKeyTo(name, profs)
   table.sort(names)
   local route = Route(name)
   if route == "WHISPER" then
-    Send("WHISPER", name, nil, KEY_TEXT .. KeyBody(name, profs))
+    for i, body in ipairs(KeyBodies(name, profs, 250 - strlen(KEY_TEXT))) do
+      Send("WHISPER", name, body, (i == 1) and (KEY_TEXT .. body) or nil)
+    end
   else
-    Send(route, nil, KeyBody(name, profs))
+    for _, body in ipairs(KeyBodies(name, profs, MAX_MSG)) do Send(route, nil, body) end
   end
   CH.Print("Shared " .. table.concat(names, ", ") .. " with " .. name .. ".")
 end
@@ -188,7 +274,7 @@ function CH.AnnounceGuild(verbose)
   if CH.Count(CH.me.profs) == 0 then return end
   CH.shared["@guild"] = {}
   for prof in pairs(CH.me.profs) do CH.shared["@guild"][prof] = true end
-  Send("GUILD", nil, KeyBody(""))
+  for _, body in ipairs(KeyBodies("", nil, MAX_MSG)) do Send("GUILD", nil, body) end
   if verbose then CH.Print("Shared your recipe key with your guild.") end
 end
 
@@ -210,8 +296,13 @@ function CH.RequestUpdate(name, force)
     Send(route, nil, "Q^" .. name .. "^" .. table.concat(want, ","))
   end
   o.requested = time()
+  CH.requests[name] = CH.requests[name] or { n = 0 }
+  CH.requests[name].t = GetTime()
   return true
 end
+
+-- open requests: name -> { t = sent at, n = retries }
+CH.requests = {}
 
 -- Profession-level summary of a player's key vs. cache
 function CH.IsOutdated(name)
@@ -374,6 +465,26 @@ local function Handle(body, from, route)
       end
     end
 
+  elseif kind == "R" then
+    if f[2] ~= CH.player then return end
+    local prof = f[3] or ""
+    local p = CH.me.profs[prof]
+    local ok = (CH.shared[from] and CH.shared[from][prof])
+      or (route == "GUILD" and CH.shared["@guild"] and CH.shared["@guild"][prof])
+    if not p or not ok then return end
+    local target = (route == "WHISPER") and from or nil
+    -- they missed whispers: send slower from now on
+    if route == "WHISPER" then CH.SlowerWhispers() end
+    if p.hash ~= f[4] then
+      SendProf(route, target, prof)      -- changed meanwhile: everything again
+    else
+      local only = {}
+      for _, n in ipairs((CH.Split(f[5] or "", ","))) do
+        if tonumber(n) then only[tonumber(n)] = true end
+      end
+      SendProf(route, target, prof, only)
+    end
+
   elseif kind == "O" then
     if f[2] ~= CH.player then return end
     local id, part, total = f[3], tonumber(f[4]) or 1, tonumber(f[5]) or 1
@@ -405,19 +516,32 @@ local function Handle(body, from, route)
     if CH.db.chars[CH.realm][from] then return end
     staging[from .. "\1" .. (f[2] or "")] = {
       rank = tonumber(f[3]), max = tonumber(f[4]), hash = f[5],
-      count = tonumber(f[6]) or 0, craft = (f[7] == "1") and 1 or nil, recipes = {},
+      count = tonumber(f[6]) or 0, craft = (f[7] == "1") and 1 or nil,
+      nchunks = tonumber(f[8]) or 1, parts = {}, got = 0,
+      from = from, prof = f[2] or "", route = route, last = GetTime(), tries = 0,
     }
 
   elseif kind == "E" then
     local prof = f[2] or ""
     local s = staging[from .. "\1" .. prof]
-    if not s then return end
-    -- the entry text itself may not contain "^", so f[3] is the whole blob
-    for _, e in ipairs((CH.Split(f[3] or "", "~"))) do
-      if e ~= "" then table.insert(s.recipes, DecodeEntry(e)) end
+    local n = tonumber(f[3])
+    if not s or not n then return end
+    -- the entry text itself may not contain "^", so f[4] is the whole blob
+    if not s.parts[n] then
+      s.parts[n] = f[4] or ""
+      s.got = s.got + 1
+      s.tries = 0  -- progress: count retries only while nothing arrives
     end
-    if table.getn(s.recipes) >= s.count then
+    s.last = GetTime()
+    if s.got >= s.nchunks then
       staging[from .. "\1" .. prof] = nil
+      s.recipes = {}
+      for i = 1, s.nchunks do
+        for _, e in ipairs((CH.Split(s.parts[i] or "", "~"))) do
+          if e ~= "" then table.insert(s.recipes, DecodeEntry(e)) end
+        end
+      end
+      s.parts, s.got, s.nchunks, s.from, s.prof, s.route, s.last, s.tries = nil
       local o = OtherEntry(from)
       s.time = time()
       o.profs[prof] = s
@@ -431,6 +555,51 @@ local function Handle(body, from, route)
     end
   end
 end
+
+-- Watchdog: chunks that went missing (chat limit, lag) are asked for again
+local watch = CreateFrame("Frame")
+watch.next = 0
+watch:SetScript("OnUpdate", function()
+  if GetTime() < watch.next then return end
+  watch.next = GetTime() + 1
+  -- a request (or the list start) may have been dropped: ask again
+  for name, r in pairs(CH.requests) do
+    local busy
+    for key in pairs(staging) do
+      if strsub(key, 1, strlen(name) + 1) == name .. "\1" then busy = true end
+    end
+    if not busy and GetTime() - r.t > 20 then
+      if r.n < 3 and CH.IsOutdated(name) then
+        r.n = r.n + 1
+        CH.RequestUpdate(name)
+      else
+        CH.requests[name] = nil
+      end
+    end
+  end
+  for key, s in pairs(staging) do
+    local wait = (s.route == "WHISPER") and 15 or 8
+    if GetTime() - s.last > wait then
+      if s.tries >= 4 then
+        staging[key] = nil
+        CH.Print("Could not load " .. s.from .. "'s " .. s.prof .. " completely. Try Update later.")
+      else
+        s.tries = s.tries + 1
+        s.last = GetTime()
+        local missing = {}
+        for i = 1, s.nchunks do
+          if not s.parts[i] and table.getn(missing) < 40 then table.insert(missing, i) end
+        end
+        local body = "R^" .. s.from .. "^" .. s.prof .. "^" .. (s.hash or "") .. "^" .. table.concat(missing, ",")
+        if s.route == "WHISPER" then
+          Send("WHISPER", s.from, body)
+        else
+          Send(s.route, nil, body)
+        end
+      end
+    end
+  end
+end)
 
 CH.On("CHAT_MSG_ADDON", function(prefix, msg, channel, from)
   if prefix ~= CH.prefix then return end
