@@ -151,7 +151,7 @@ def pump(rounds=20):
 
 
 A.execute('SENT = {}; CraftHouse.SendKeyTo("bob")')
-pump(30)
+pump(120)
 bp = B.eval('CraftHouse.others.Henry')
 check(bp is not None and bp['profs']['Tailoring'] is not None and bp['profs']['Tailoring']['count'] == 3,
       "Bob received Henry's Tailoring")
@@ -176,7 +176,7 @@ A.execute('''table.insert(TS.list, {name="Wool Cloak", kind="optimal", link="|cf
   tip={{"Wool Cloak"},{"Back"},{"+2 Agility"},{"Requires Level 20"}}})''')
 A.execute('Fire("TRADE_SKILL_UPDATE"); Tick(0.4, 2)')
 A.execute('SENT = {}; CraftHouse.SendKeyTo("Bob")')
-pump(30)
+pump(120)
 check(B.eval('CraftHouse.others.Henry.profs.Tailoring.count') == 4, "Bob's cache updated after new key")
 
 # many recipes -> chunking stays under 255
@@ -186,7 +186,7 @@ A.execute('''for i = 1, 120 do table.insert(TS.list, {name="Long Recipe Name Num
   tip={{"x"},{"Hands","Leather"},{"+2 Agility"},{"+3 Stamina"},{"55 Armor"},{"Requires Level 40"}}}) end''')
 A.execute('Fire("TRADE_SKILL_UPDATE"); Tick(0.4, 2)')
 A.execute('SENT = {}; CraftHouse.SendKeyTo("Bob")')
-pump(80)
+pump(300)
 check(B.eval('CraftHouse.others.Henry.profs.Tailoring.count') == 124, "124 recipes arrive in chunks")
 
 # to-do list: Bob builds a list from Henry's recipes and sends it
@@ -205,7 +205,7 @@ LKIND, LWHO, LN = kind, who, table.getn(list)
 SENT = {}
 CraftHouse.SendList(who, list)''')
 check(B.eval('LKIND') == 'out' and B.eval('LWHO') == 'Henry' and B.eval('LN') == 41, "Bob's to-do list for Henry has 41 entries")
-pump(30)
+pump(120)
 inc = A.eval('CraftHouse.lists.inc.Bob')
 check(inc is not None and len(list(inc['items'].values())) == 41, "Henry received Bob's to-do list (41)")
 A.execute('QBEFORE = table.getn(CraftHouse.queue); MOVED = CraftHouse.TakeOver("Bob")')
@@ -301,7 +301,7 @@ def deliver_to_carl():
         if m[0] == 'WHISPER':
             A.execute(f'Fire("CHAT_MSG_WHISPER", {lua_str(m[1])}, "Carl")')
 A.execute('GUILD = nil; SENT = {}; CraftHouse.SendKeyTo("Carl", { Tailoring = true })')
-for _ in range(80):
+for _ in range(300):
     A.execute('Tick(0.4)'); C.execute('Tick(0.4)'); deliver_to_carl()
 ck = C.eval('CraftHouse.others.Henry.key')
 check(sorted(ck.keys()) == ['Tailoring'], "partial key only contains Tailoring")
@@ -377,6 +377,49 @@ check(A.eval('DONE') is None and 'needs: Cooking Fire' in list(A.eval('OUT').val
 A.execute('GetTradeSkillTools = function(i) return "Cooking Fire", 1 end; CraftHouse.Craft(CraftHouse.view.sel, 1)')
 check(A.eval('DONE') is not None, "with the fire nearby it crafts")
 A.execute('GetTradeSkillTools = nil')
+
+# whisper share under the server chat limit (regression: receiver ended up empty)
+D = client("Dora")
+def deliver_pair(src, dst, srcname, dstname):
+    sent = [list(m.values()) for m in src.eval('SENT').values()]
+    src.execute('SENT = {}')
+    for m in sent:
+        if m[0] == 'WHISPER' and m[2] == dstname:
+            dst.execute(f'Fire("CHAT_MSG_WHISPER", {lua_str(m[1])}, "{srcname}")')
+A.execute('''local recs = {}
+for i = 1, 124 do table.insert(recs, { n = "Big Recipe Name Number " .. i, id = 7000 + i, q = 2, l = 30, c = "Hands",
+  t = { agi = 3, sta = 4, armor = 60 }, r = { {2997, 2, "Bolt of Wool"}, {2320, 1, "Thread"} } }) end
+local p = CraftHouse.me.profs.Tailoring
+p.recipes, p.count, p.hash = recs, 124, "bigsynthetic"''')
+A.execute('LIMIT = true; DROPPED = 0; WHISPERS = {}; SENT = {}')
+D.execute('LIMIT = true; DROPPED = 0; WHISPERS = {}')
+A.execute('CraftHouse.SendKeyTo("Dora", { Tailoring = true })')
+for _ in range(1500):
+    A.execute('Tick(0.4)'); D.execute('Tick(0.4)')
+    deliver_pair(A, D, "Henry", "Dora"); deliver_pair(D, A, "Dora", "Henry")
+dropped = A.eval('DROPPED') + D.eval('DROPPED')
+got = D.eval('CraftHouse.others.Henry and CraftHouse.others.Henry.profs.Tailoring and CraftHouse.others.Henry.profs.Tailoring.count')
+check(dropped > 0, "chat limit was hit in the simulation (%d whispers dropped)" % dropped)
+check(got == 124, "all 124 recipes arrive despite the chat limit (got %s)" % got)
+A.execute('LIMIT = nil'); D.execute('LIMIT = nil')
+
+# silent drops (no server message): missing chunks are requested again
+E = client("Emma")
+A.execute('CraftHouse.me.profs.Tailoring.hash = "bigsynthetic2"; CraftHouse.SetWhisperDelay(0.5); LIMITN = 2; LIMIT = true; SILENT = true; DROPPED = 0; WHISPERS = {}; SENT = {}')
+E.execute('LIMIT = true; SILENT = true; DROPPED = 0; WHISPERS = {}')
+A.execute('CraftHouse.SendKeyTo("Emma", { Tailoring = true })')
+for _ in range(3000):
+    A.execute('Tick(0.4)'); E.execute('Tick(0.4)')
+    deliver_pair(A, E, "Henry", "Emma"); deliver_pair(E, A, "Emma", "Henry")
+got = E.eval('CraftHouse.others.Henry and CraftHouse.others.Henry.profs.Tailoring and CraftHouse.others.Henry.profs.Tailoring.count')
+check(A.eval('DROPPED') > 0 and got == 124, "silently dropped chunks are re-requested (%d dropped, got %s)" % (A.eval('DROPPED'), got))
+A.execute('LIMIT = nil; SILENT = nil'); E.execute('LIMIT = nil; SILENT = nil')
+
+# a key with many professions is split so whispers stay below 255 chars
+A.execute('''for i = 1, 9 do CraftHouse.me.profs["Profession Number " .. i] = { rank = 300, max = 300, hash = "abcdefg", count = 120, recipes = {} } end
+SENT = {}; CraftHouse.SendKeyTo("Zed"); Tick(2, 10)''')
+lens = [len(list(m.values())[1]) for m in A.eval('SENT').values()]
+check(len(lens) > 1 and max(lens) <= 255, "long key split into %d whispers, longest %d chars" % (len(lens), max(lens)))
 
 print("\n%d failures" % fails)
 print("--- Henry chat:")

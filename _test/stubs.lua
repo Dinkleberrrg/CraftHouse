@@ -76,7 +76,24 @@ function GetNumRaidMembers() return 0 end
 function GetNumPartyMembers() return 0 end
 SENT = {}
 function SendAddonMessage(p, m, ch) table.insert(SENT, {"ADDON", p, m, ch}) end
-function SendChatMessage(m, kind, lang, target) table.insert(SENT, {kind, m, target}) end
+-- LIMIT = true simulates the server chat limit: more than 3 whispers
+-- within 5 seconds are dropped and the server answers with a system message
+WHISPERS = {}
+DROPPED = 0
+function SendChatMessage(m, kind, lang, target)
+  if kind == "WHISPER" and LIMIT then
+    local now = GetTime()
+    local recent = 0
+    for _, t in ipairs(WHISPERS) do if now - t < 5 then recent = recent + 1 end end
+    if recent >= (LIMITN or 3) then
+      DROPPED = DROPPED + 1
+      if not SILENT then Fire("CHAT_MSG_SYSTEM", "You must wait 5 Seconds before speaking again.") end
+      return
+    end
+    table.insert(WHISPERS, now)
+  end
+  table.insert(SENT, {kind, m, target})
+end
 function ChatFrame_OnEvent(event) CHATSHOWN = (CHATSHOWN or 0) + 1 end
 function GetItemInfo(id) return nil end
 function CastSpellByName(n) CAST = n end
