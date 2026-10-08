@@ -97,6 +97,8 @@ end
 function ChatFrame_OnEvent(event) CHATSHOWN = (CHATSHOWN or 0) + 1 end
 function GetItemInfo(id) return nil end
 function CastSpellByName(n) CAST = n end
+function SetItemRef(link) ITEMREF = link end
+function ChatFrame_OpenChat(t) OPENCHAT = t end
 function CloseTradeSkill() end
 function CloseCraft() end
 

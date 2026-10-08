@@ -4,7 +4,7 @@ import os, sys
 from lupa import LuaRuntime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FILES = ["core.lua", "scan.lua", "craft.lua", "comm.lua", "ui.lua"]
+FILES = ["core.lua", "data.lua", "db.lua", "scan.lua", "craft.lua", "comm.lua", "chatlink.lua", "ui.lua"]
 
 
 def client(name):
@@ -414,6 +414,68 @@ for _ in range(3000):
 got = E.eval('CraftHouse.others.Henry and CraftHouse.others.Henry.profs.Tailoring and CraftHouse.others.Henry.profs.Tailoring.count')
 check(A.eval('DROPPED') > 0 and got == 124, "silently dropped chunks are re-requested (%d dropped, got %s)" % (A.eval('DROPPED'), got))
 A.execute('LIMIT = nil; SILENT = nil'); E.execute('LIMIT = nil; SILENT = nil')
+
+# key with recipe mask: real recipes from the local copy need almost no traffic
+F = client("Finn")
+A.execute('''local recs = {}
+for i, row in ipairs(CraftHouse_DB.profs.Tailoring) do
+  if i <= 150 then table.insert(recs, { n = row[2], id = row[3], q = 2, l = 0, c = "Other", t = {}, r = {} }) end
+end
+for _, r in ipairs(recs) do r.ix = CraftHouse.DBMatch("Tailoring", r) end
+recs[1].t = { int = 7 }; recs[1].l = 33
+local p = CraftHouse.me.profs.Tailoring
+p.recipes, p.count, p.hash = recs, 150, "maskhash"
+SENT = {}; WHISPERS = {}; LIMIT = nil
+NWHISPER = 0
+local orig = SendChatMessage
+SendChatMessage = function(m, k, l, t) if k == "WHISPER" then NWHISPER = NWHISPER + 1 end; orig(m, k, l, t) end''')
+A.execute('CraftHouse.SendKeyTo("Finn", { Tailoring = true })')
+for _ in range(150):
+    A.execute('Tick(0.4)'); F.execute('Tick(0.4)')
+    deliver_pair(A, F, "Henry", "Finn"); deliver_pair(F, A, "Finn", "Henry")
+fp = F.eval('CraftHouse.others.Henry.profs.Tailoring')
+check(fp is not None and len(list(fp['recipes'].values())) == 150, "150 recipes built from the key mask")
+check(A.eval('NWHISPER') <= 4, "only %d whispers from the sender (key + small extras)" % A.eval('NWHISPER'))
+fr = {r['n']: r for r in fp['recipes'].values()}
+wiz = fr.get("Lesser Wizard's Robe")
+check(wiz is not None and wiz['r'][1][3] == 'Bolt of Silk Cloth', "reagent names come from the local copy")
+r5 = A.eval("CraftHouse.me.profs.Tailoring.recipes[1].n")
+check(fr[r5]['t']['int'] == 7 and fr[r5]['l'] == 33, "sender stats missing in the copy arrive as extras")
+A.execute('SendChatMessage = nil')
+A.execute(open(os.path.join(ROOT, "_test", "stubs.lua")).read().split("-- LIMIT = true")[1].split("function SendChatMessage")[0] if False else "")
+A.execute('''function SendChatMessage(m, kind, lang, target) table.insert(SENT, {kind, m, target}) end''')
+
+# chat link: Henry posts [CH:...] in a channel, Gwen clicks it
+G = client("Gwen")
+A.execute('CODE = CraftHouse.LinkCode("Tailoring")')
+code = A.eval('CODE')
+check(code is not None and code.startswith("[CH:Tailoring:") and len(code) < 120, "link code: %s" % code)
+G.execute(f'arg1 = {lua_str("LFT " + code + " pst")}; arg2 = "Henry"; ChatFrame_OnEvent("CHAT_MSG_CHANNEL"); SHOWN = arg1')
+shown = G.eval('SHOWN')
+check("|Hcrafthouse:Henry:Tailoring:" in shown and "[Henry's Tailoring" in shown, "code is shown as a clickable link")
+import re as _re
+link = _re.search(r'\|H(crafthouse:[^|]+)\|h', shown).group(1)
+G.execute(f'SetItemRef({lua_str(link)}, "x", "LeftButton")')
+gp = G.eval('CraftHouse.others.Henry and CraftHouse.others.Henry.profs.Tailoring')
+check(gp is not None and len(list(gp['recipes'].values())) == 150 and G.eval('CraftHouse.view.src') == 'Henry',
+      "clicking the link shows Henry's 150 Tailoring recipes without any whisper")
+check(G.eval('ITEMREF') is None, "normal item links still go to the original handler only")
+G.execute('SetItemRef("item:2589:0:0:0", "x", "LeftButton")')
+check(G.eval('ITEMREF') == "item:2589:0:0:0", "item links still work")
+# shift-click on a profession tab inserts the code
+A.execute('''CraftHouse.Show(); CraftHouse.Refresh(); OPENCHAT = nil
+IsShiftKeyDown = function() return true end
+for _, o in ipairs(ALL) do if o.prof == "Tailoring" and o.kind == "Button" and o.w then this = o; o.scripts.OnClick() end end
+IsShiftKeyDown = function() return false end''')
+check(A.eval('OPENCHAT') == code, "shift-click on the profession tab puts the code into chat")
+
+# mask encode/decode roundtrip
+A.execute('''local set = { [1] = true, [6] = true, [7] = true, [300] = true }
+local m = CraftHouse.EncodeMask(set, 324)
+local back = CraftHouse.DecodeMask(m)
+MASKOK = (table.getn(back) == 4 and back[1] == 1 and back[2] == 6 and back[3] == 7 and back[4] == 300)
+MASKLEN = strlen(m)''')
+check(A.eval('MASKOK'), "mask roundtrip (%d chars for 324 recipes)" % A.eval('MASKLEN'))
 
 # a key with many professions is split so whispers stay below 255 chars
 A.execute('''for i = 1, 9 do CraftHouse.me.profs["Profession Number " .. i] = { rank = 300, max = 300, hash = "abcdefg", count = 120, recipes = {} } end
