@@ -196,7 +196,7 @@ end
 
 local function ItemName(id, fallback)
   if id and id > 0 then
-    local n = GetItemInfo(id)
+    local n = GetItemInfo(id) or CH.DBItemName(id)
     if n then return n end
   end
   return fallback or ("Item #" .. (id or "?"))
@@ -288,6 +288,8 @@ local function BuildResults()
         if view.prof == "All" or view.prof == prof then
           for _, rec in ipairs(p.recipes or {}) do
             rec.prof, rec.owner, rec.ownerKind = prof, s.name, s.kind
+            -- recipes built from a key: fill stats from items the client knows
+            if s.kind ~= "me" and (not rec.t or not next(rec.t)) then CH.Learn(rec) end
             if Matches(rec, true) then
               local c = rec.c or "Other"
               catCount[c] = (catCount[c] or 0) + 1
@@ -806,6 +808,10 @@ local function Build()
     local w = (i == 1) and 50 or 100
     local x = 156 + ((i == 1) and 0 or (52 + (i - 2) * 102))
     local b = Button(main, "", x, -36, w, 22, function()
+      if IsShiftKeyDown() and IsMine() and this.prof and this.prof ~= "All" then
+        CH.InsertLink(this.prof)
+        return
+      end
       view.prof = this.prof
       view.sel = nil
       CH.Refresh()
@@ -817,6 +823,7 @@ local function Build()
       GameTooltip:SetOwner(this, "ANCHOR_BOTTOM")
       GameTooltip:SetText(this.prof .. "  " .. (p.rank or "?") .. "/" .. (p.max or "?"), 1, 1, 1)
       GameTooltip:AddLine(table.getn(p.recipes or {}) .. " recipes", 0.7, 0.7, 0.7)
+      if IsMine() then GameTooltip:AddLine("Shift-click: post a link in chat", 0.2, 1, 0.8) end
       GameTooltip:Show()
     end)
     b:SetScript("OnLeave", function() GameTooltip:Hide() end)
