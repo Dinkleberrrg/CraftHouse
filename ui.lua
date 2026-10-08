@@ -414,6 +414,9 @@ function CH.UpdateList()
     end
   end
   ui.count:SetText(n .. " recipes")
+  for key, b in pairs(ui.sortBtns or {}) do
+    if view.sort == key then b:LockHighlight() else b:UnlockHighlight() end
+  end
 end
 
 --------------------------------------------------------------------------
@@ -428,7 +431,7 @@ local function UpdateDetails()
     d.title:SetText("|cff888888Select a recipe. Right-click adds it to the queue.|r")
     d.reag:SetText("")
     d.icon:Hide()
-    d.craft:Hide(); d.all:Hide(); d.queue:Hide(); d.num:Hide(); d.ask:Hide(); d.amount:Hide()
+    d.craft:Hide(); d.all:Hide(); d.queue:Hide(); d.num:Hide(); d.amount:Hide()
     return
   end
   d.icon:SetTexture(RecIcon(rec)); d.icon:Show()
@@ -457,14 +460,13 @@ local function UpdateDetails()
   end
   d.reag:SetText(table.concat(lines, "\n"))
   if mine then
-    d.craft:Show(); d.all:Show(); d.queue:Show(); d.num:Show(); d.ask:Hide()
+    d.craft:Show(); d.all:Show(); d.queue:Show(); d.num:Show()
     d.queue:SetText("+ Queue")
     local a = CH.Available(rec)
     d.all:SetText("Craft all (" .. a .. ")")
     d.amount:Show()
   else
     d.craft:Hide(); d.all:Hide(); d.queue:Show(); d.num:Show()
-    if rec.ownerKind == "other" then d.ask:Show() else d.ask:Hide() end
     d.queue:SetText("+ To-do")
     d.amount:Show()
   end
@@ -914,10 +916,16 @@ local function Build()
     if view.sort == "level" then view.asc = not view.asc else view.sort = "level" end
     CH.Refresh()
   end)
+  local hSkill = Button(list, "Skill", 92, -3, 50, 18, function()
+    view.sort = "diff"
+    CH.Refresh()
+  end)
   Tip(hName, "Sort by name"); Tip(hLvl, "Sort by required level (click again: reverse)")
+  Tip(hSkill, "Sort by skill-up colour: orange, yellow, green, grey")
+  ui.sortBtns = { name = hName, level = hLvl, diff = hSkill }
   local hStats = Text(list, "GameFontNormalSmall", 246, -6); hStats:SetText("Stats")
   local hHave = Text(list, "GameFontNormalSmall", 396, -6, 50, "RIGHT"); hHave:SetText("Can")
-  ui.count = Text(list, "GameFontDisableSmall", 96, -6)
+  ui.count = Text(list, "GameFontDisableSmall", 146, -6)
 
   ui.scroll = CreateFrame("ScrollFrame", "CraftHouseListScroll", list, "FauxScrollFrameTemplate")
   ui.scroll:SetPoint("TOPLEFT", list, "TOPLEFT", 4, -22)
@@ -953,16 +961,6 @@ local function Build()
     if view.sel then CH.Craft(view.sel, math.max(1, CH.Available(view.sel))) end
   end)
   Tip(d.all, "Craft as many as your bags allow.")
-  d.ask = Button(d, "Ask to craft", 300, -71, 144, 22, function()
-    local rec = view.sel
-    if not rec then return end
-    local text = "/w " .. (rec.owner or "") .. " Hi! Could you craft " .. (rec.n) .. " for me?"
-    if ChatFrame_OpenChat then
-      ChatFrame_OpenChat(text)
-    else
-      ChatFrameEditBox:Show(); ChatFrameEditBox:SetText(text)
-    end
-  end)
 
   -- Right: queue
   local q = Panel(main, 588, -92, 236, 250)

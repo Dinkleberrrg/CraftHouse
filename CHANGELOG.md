@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.1
+- New sort header Skill next to Name and Lvl: sorts by skill-up colour (orange, yellow, green, grey). The active sort header is highlighted.
+- Removed the Ask to craft button; use + To-do / + Queue.
+
 ## 1.6.0
 - Fix: sharing by whisper left the receiver with an empty player. The server chat limit (You must wait N seconds before speaking again) dropped most whispers. Now whispers go out slower, CraftHouse pauses and resends when the limit hits (and hides that message), recipe lists come in numbered chunks, and the receiver asks again for missing chunks or a lost request.
 - Keys with many professions are split so no whisper exceeds 255 characters.
