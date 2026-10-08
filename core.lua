@@ -21,7 +21,7 @@
 CraftHouse = {}
 local CH = CraftHouse
 
-CH.version  = "1.6.1"
+CH.version  = "1.7.0"
 CH.prefix   = "CraftHouse"
 CH.realm    = nil
 CH.player   = nil

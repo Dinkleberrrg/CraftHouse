@@ -21,7 +21,16 @@
        E^<prof>^<n>^<entry>~<entry>~... recipes, chunk n of <chunks>
        R^<target>^<prof>^<hash>^<n>,<n> resend missing chunks
        O^<target>^<id>^<part>^<parts>^<prof;name;count>~...   to-do list
-     entry: id;quality;level;category;stats;reagents;name;made
+       X^<target>^<prof>,<prof>         request extras (see below)
+     entry: id;quality;level;category;stats;reagents;name;made;spell
+
+     Since 1.7 the key also carries the recipes themselves: every key entry
+     has <dbversion>:<mask>:<unmapped>. With the same local recipe copy
+     (db.lua / data.lua) the receiver builds the whole list from the mask,
+     no recipe data has to be sent. Afterwards it asks for "extras" (X):
+     recipes missing in the local copy and stats the copy does not know
+     yet. Those come as a P^...^x list and are merged in. Players with a
+     different copy fall back to the full list (Q).
        stats    "int=5/sta=3"
        reagents "2321*2/2589*4" (item id, or the name when the id is unknown)
 ]]--
@@ -152,8 +161,13 @@ local function KeyBodies(target, profs, maxLen)
   local entries = {}
   for prof, p in pairs(CH.me.profs) do
     if not profs or profs[prof] then
-      table.insert(entries, prof .. ":" .. (p.rank or 0) .. ":" .. (p.max or 0) .. ":"
-        .. (p.hash or "") .. ":" .. (p.count or 0))
+      local e = prof .. ":" .. (p.rank or 0) .. ":" .. (p.max or 0) .. ":"
+        .. (p.hash or "") .. ":" .. (p.count or 0)
+      if CH.DBHas(prof) then
+        local mask, unmapped = CH.MaskFor(prof, p.recipes)
+        e = e .. ":" .. CH.dbVersion .. ":" .. mask .. ":" .. unmapped
+      end
+      table.insert(entries, e)
     end
   end
   local function Head(mode) return "K^" .. CH.version .. "^" .. (target or "") .. "^" .. mode end
@@ -192,16 +206,48 @@ local function EncodeEntry(r)
   if r.sl then cat = cat .. ":" .. r.sl end
   return (r.id or 0) .. ";" .. (r.q or 1) .. ";" .. (r.l or 0) .. ";" .. cat .. ";"
     .. table.concat(stats, "/") .. ";" .. table.concat(reag, "/") .. ";"
-    .. gsub(r.n, "[;~%^]", "") .. ";" .. (r.mk or 1)
+    .. gsub(r.n, "[;~%^]", "") .. ";" .. (r.mk or 1) .. ";" .. (r.ix and CH.DBSpell(r.prof or "", r.ix) or "")
+end
+
+-- Stats only, for a recipe the receiver builds from its local copy
+local function EncodeStats(r, sid)
+  local stats = {}
+  for k, v in pairs(r.t or {}) do table.insert(stats, k .. "=" .. v) end
+  local cat = r.c or "Other"
+  if r.sl then cat = cat .. ":" .. r.sl end
+  return (r.id or 0) .. ";" .. (r.q or 1) .. ";" .. (r.l or 0) .. ";" .. cat .. ";"
+    .. table.concat(stats, "/") .. ";;;;" .. sid
+end
+
+-- What the receiver of a mask key is missing: recipes not in the local
+-- copy (full entries) and stats the copy does not know (stats entries)
+local function ExtraEntries(prof)
+  local p = CH.me.profs[prof]
+  local out = {}
+  for _, r in ipairs(p.recipes) do
+    r.prof = prof
+    if not r.ix then
+      table.insert(out, EncodeEntry(r))
+    elseif ((r.t and next(r.t)) or (r.l or 0) > 0) and not CH.DBHasStats(prof, r.ix) then
+      table.insert(out, EncodeStats(r, CH.DBSpell(prof, r.ix)))
+    end
+  end
+  return out
 end
 
 -- Splits a profession into numbered chunks (same result every time)
-local function Chunks(prof)
+local function Chunks(prof, extras)
   local p = CH.me.profs[prof]
+  local entries
+  if extras then
+    entries = ExtraEntries(prof)
+  else
+    entries = {}
+    for _, r in ipairs(p.recipes) do r.prof = prof; table.insert(entries, EncodeEntry(r)) end
+  end
   local chunks, blob = {}, ""
   local head = "E^" .. prof .. "^999^"
-  for _, r in ipairs(p.recipes) do
-    local e = EncodeEntry(r)
+  for _, e in ipairs(entries) do
     if blob ~= "" and strlen(head) + strlen(blob) + 1 + strlen(e) > MAX_MSG then
       table.insert(chunks, blob)
       blob = ""
@@ -209,17 +255,19 @@ local function Chunks(prof)
     blob = (blob == "") and e or (blob .. "~" .. e)
   end
   if blob ~= "" or table.getn(chunks) == 0 then table.insert(chunks, blob) end
-  return chunks
+  return chunks, table.getn(entries)
 end
 
 -- only = { [n] = true } resends just those chunks
-local function SendProf(route, target, prof, only)
+-- extras = true sends only what a mask key does not cover
+local function SendProf(route, target, prof, only, extras)
   local p = CH.me.profs[prof]
   if not p then return end
-  local chunks = Chunks(prof)
+  local chunks, n = Chunks(prof, extras)
   if not only then
     Send(route, target, "P^" .. prof .. "^" .. (p.rank or 0) .. "^" .. (p.max or 0) .. "^"
-      .. (p.hash or "") .. "^" .. (p.count or 0) .. "^" .. (p.craft or 0) .. "^" .. table.getn(chunks))
+      .. (p.hash or "") .. "^" .. (extras and n or (p.count or 0)) .. "^" .. (p.craft or 0) .. "^"
+      .. table.getn(chunks) .. (extras and "^x" or ""))
   end
   for i, c in ipairs(chunks) do
     if not only or only[i] then Send(route, target, "E^" .. prof .. "^" .. i .. "^" .. c) end
@@ -283,21 +331,37 @@ end
 function CH.RequestUpdate(name, force)
   local o = CH.others[name]
   if not o or not o.key then return end
-  local want = {}
+  local want, extras = {}, {}
+  if not o.profs then o.profs = {} end
   for prof, k in pairs(o.key) do
-    local p = o.profs and o.profs[prof]
-    if force or not p or p.hash ~= k.hash then table.insert(want, prof) end
+    local p = o.profs[prof]
+    if force or not p or p.hash ~= k.hash then
+      if k.dbver == CH.dbVersion and k.mask and CH.DBHas(prof) then
+        -- same local copy: the key already contains the recipes
+        o.profs[prof] = {
+          rank = k.rank, max = k.max, hash = k.hash, count = k.count, time = time(),
+          mask = k.mask, recipes = CH.RecipesFromMask(prof, k.mask, k.rank),
+        }
+        o.time = time()
+        table.insert(extras, prof)
+      else
+        table.insert(want, prof)
+      end
+    end
   end
-  if table.getn(want) == 0 then return end
+  if table.getn(want) == 0 and table.getn(extras) == 0 then return end
   local route = o.route or Route(name)
-  if route == "WHISPER" then
-    Send("WHISPER", name, "Q^" .. name .. "^" .. table.concat(want, ","))
-  else
-    Send(route, nil, "Q^" .. name .. "^" .. table.concat(want, ","))
+  local function Ask(body)
+    if route == "WHISPER" then Send("WHISPER", name, body) else Send(route, nil, body) end
+  end
+  if table.getn(extras) > 0 then Ask("X^" .. name .. "^" .. table.concat(extras, ",")) end
+  if table.getn(want) > 0 then
+    Ask("Q^" .. name .. "^" .. table.concat(want, ","))
+    CH.requests[name] = CH.requests[name] or { n = 0 }
+    CH.requests[name].t = GetTime()
   end
   o.requested = time()
-  CH.requests[name] = CH.requests[name] or { n = 0 }
-  CH.requests[name].t = GetTime()
+  if CH.IsShown() then CH.Refresh() end
   return true
 end
 
@@ -384,6 +448,7 @@ local function DecodeEntry(e)
   local rec = {
     id = tonumber(f[1]) or 0, q = tonumber(f[2]) or 1, l = tonumber(f[3]) or 0,
     c = f[4] or "Other", t = {}, r = {}, n = f[7] or "?", mk = tonumber(f[8]),
+    sid = tonumber(f[9]),
   }
   if rec.mk == 1 then rec.mk = nil end
   local _, _, cat, sl = strfind(rec.c, "^(.-):(.+)$")
@@ -430,7 +495,8 @@ local function Handle(body, from, route)
     for i = first, table.getn(f) do
       local k = CH.Split(f[i], ":")
       if k[1] and k[1] ~= "" and k[2] then
-        o.key[k[1]] = { rank = tonumber(k[2]), max = tonumber(k[3]), hash = k[4], count = tonumber(k[5]) }
+        o.key[k[1]] = { rank = tonumber(k[2]), max = tonumber(k[3]), hash = k[4], count = tonumber(k[5]),
+          dbver = k[6], mask = k[7], unmapped = tonumber(k[8]) }
         local p = o.profs[k[1]]
         if p and p.hash == k[4] then p.rank, p.max = tonumber(k[2]), tonumber(k[3]) end
       end
@@ -449,6 +515,20 @@ local function Handle(body, from, route)
       end
     end
     if CH.IsShown() then CH.Refresh() end
+
+  elseif kind == "X" then
+    if f[2] ~= CH.player then return end
+    local target = (route == "WHISPER") and from or nil
+    for _, prof in ipairs((CH.Split(f[3] or "", ","))) do
+      local p = CH.me.profs[prof]
+      local key = "x" .. route .. (target or "") .. prof .. (p and p.hash or "")
+      local ok = (CH.shared[from] and CH.shared[from][prof])
+        or (route == "GUILD" and CH.shared["@guild"] and CH.shared["@guild"][prof])
+      if p and ok and (not answered[key] or GetTime() - answered[key] > 20) then
+        answered[key] = GetTime()
+        SendProf(route, target, prof, nil, true)
+      end
+    end
 
   elseif kind == "Q" then
     if f[2] ~= CH.player then return end
@@ -475,14 +555,15 @@ local function Handle(body, from, route)
     local target = (route == "WHISPER") and from or nil
     -- they missed whispers: send slower from now on
     if route == "WHISPER" then CH.SlowerWhispers() end
+    local extras = (f[6] == "x")
     if p.hash ~= f[4] then
-      SendProf(route, target, prof)      -- changed meanwhile: everything again
+      SendProf(route, target, prof, nil, extras)  -- changed meanwhile: everything again
     else
       local only = {}
       for _, n in ipairs((CH.Split(f[5] or "", ","))) do
         if tonumber(n) then only[tonumber(n)] = true end
       end
-      SendProf(route, target, prof, only)
+      SendProf(route, target, prof, only, extras)
     end
 
   elseif kind == "O" then
@@ -519,6 +600,7 @@ local function Handle(body, from, route)
       count = tonumber(f[6]) or 0, craft = (f[7] == "1") and 1 or nil,
       nchunks = tonumber(f[8]) or 1, parts = {}, got = 0,
       from = from, prof = f[2] or "", route = route, last = GetTime(), tries = 0,
+      extras = (f[9] == "x"),
     }
 
   elseif kind == "E" then
@@ -541,8 +623,32 @@ local function Handle(body, from, route)
           if e ~= "" then table.insert(s.recipes, DecodeEntry(e)) end
         end
       end
-      s.parts, s.got, s.nchunks, s.from, s.prof, s.route, s.last, s.tries = nil
+      local extras = s.extras
+      s.parts, s.got, s.nchunks, s.from, s.prof, s.route, s.last, s.tries, s.extras = nil
       local o = OtherEntry(from)
+      local cur = o.profs[prof]
+      if extras and cur and cur.recipes then
+        -- merge stats and unknown recipes into the list built from the key
+        local bySid, byName = {}, {}
+        for _, r in ipairs(cur.recipes) do
+          if r.sid then bySid[r.sid] = r end
+          byName[r.n] = r
+        end
+        for _, e in ipairs(s.recipes) do
+          local r = e.sid and bySid[e.sid]
+          if r then
+            if next(e.t) then r.t = e.t end
+            if (e.l or 0) > 0 then r.l = e.l end
+            if e.q then r.q = e.q end
+            if e.c and e.c ~= "" then r.c, r.sl = e.c, e.sl or r.sl end
+          elseif e.n ~= "" and not byName[e.n] then
+            table.insert(cur.recipes, e)
+          end
+        end
+        if CH.IsShown() then CH.Refresh() end
+        return
+      end
+      if extras then return end
       s.time = time()
       o.profs[prof] = s
       o.time = time()
@@ -591,6 +697,7 @@ watch:SetScript("OnUpdate", function()
           if not s.parts[i] and table.getn(missing) < 40 then table.insert(missing, i) end
         end
         local body = "R^" .. s.from .. "^" .. s.prof .. "^" .. (s.hash or "") .. "^" .. table.concat(missing, ",")
+          .. (s.extras and "^x" or "")
         if s.route == "WHISPER" then
           Send("WHISPER", s.from, body)
         else
@@ -629,6 +736,10 @@ local origChatFrame_OnEvent = ChatFrame_OnEvent
 function ChatFrame_OnEvent(event)
   if (event == "CHAT_MSG_WHISPER" or event == "CHAT_MSG_WHISPER_INFORM") and WhisperBody(arg1) then
     return
+  end
+  -- profession links ([CH:...] codes) become clickable
+  if arg1 and CH.LinkifyChat and strsub(event or "", 1, 9) == "CHAT_MSG_" then
+    arg1 = CH.LinkifyChat(arg1, (event == "CHAT_MSG_WHISPER_INFORM") and CH.player or arg2)
   end
   return origChatFrame_OnEvent(event)
 end

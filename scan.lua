@@ -120,6 +120,14 @@ function CH.UseCategory(text, name)
   return "Other"
 end
 
+-- Reads the tooltip of an item link ("item:123:0:0:0") into rec
+function CH.ReadItemTooltip(link, rec)
+  tip:ClearLines()
+  tip:SetOwner(WorldFrame, "ANCHOR_NONE")
+  tip:SetHyperlink(link)
+  CH.ReadTooltipInto(rec)
+end
+
 -- Reads the currently set tooltip into rec fields l, c, t
 local function ReadTooltip(rec, isCraft)
   local t = {}
@@ -152,6 +160,7 @@ local function ReadTooltip(rec, isCraft)
   rec.c = cat or rec.c or "Other"
   rec.t = t
 end
+CH.ReadTooltipInto = function(rec) ReadTooltip(rec) end
 
 --------------------------------------------------------------------------
 -- Profession scans
@@ -161,6 +170,8 @@ local function FinishProf(prof, rank, max, recipes, isCraft)
   local keys = {}
   for i, r in ipairs(recipes) do keys[i] = r.n end
   table.sort(keys)
+  for _, r in ipairs(recipes) do r.ix = CH.DBMatch and CH.DBMatch(prof, r) end
+  if CH.LearnFromScan then CH.LearnFromScan(recipes) end
   local p = CH.me.profs[prof] or {}
   p.rank, p.max, p.recipes = rank, max, recipes
   p.count = table.getn(recipes)
