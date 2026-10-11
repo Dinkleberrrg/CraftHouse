@@ -22,7 +22,7 @@
        R^<target>^<prof>^<hash>^<n>,<n> resend missing chunks
        O^<target>^<id>^<part>^<parts>^<prof;name;count>~...   to-do list
        X^<target>^<prof>,<prof>         request extras (see below)
-     entry: id;quality;level;category;stats;reagents;name;made;spell
+     entry: id;quality;level;category;stats;reagents;name;made;spell;icon
 
      Since 1.7 the key also carries the recipes themselves: every key entry
      has <dbversion>:<mask>:<unmapped>. With the same local recipe copy
@@ -207,16 +207,17 @@ local function EncodeEntry(r)
   return (r.id or 0) .. ";" .. (r.q or 1) .. ";" .. (r.l or 0) .. ";" .. cat .. ";"
     .. table.concat(stats, "/") .. ";" .. table.concat(reag, "/") .. ";"
     .. gsub(r.n, "[;~%^]", "") .. ";" .. (r.mk or 1) .. ";" .. (r.ix and CH.DBSpell(r.prof or "", r.ix) or "")
+    .. ";" .. CH.IconBase(r.ic)
 end
 
 -- Stats only, for a recipe the receiver builds from its local copy
-local function EncodeStats(r, sid)
+local function EncodeStats(r, sid, withIcon)
   local stats = {}
   for k, v in pairs(r.t or {}) do table.insert(stats, k .. "=" .. v) end
   local cat = r.c or "Other"
   if r.sl then cat = cat .. ":" .. r.sl end
   return (r.id or 0) .. ";" .. (r.q or 1) .. ";" .. (r.l or 0) .. ";" .. cat .. ";"
-    .. table.concat(stats, "/") .. ";;;;" .. sid
+    .. table.concat(stats, "/") .. ";;;;" .. sid .. ";" .. (withIcon and CH.IconBase(r.ic) or "")
 end
 
 -- What the receiver of a mask key is missing: recipes not in the local
@@ -228,8 +229,12 @@ local function ExtraEntries(prof)
     r.prof = prof
     if not r.ix then
       table.insert(out, EncodeEntry(r))
-    elseif ((r.t and next(r.t)) or (r.l or 0) > 0) and not CH.DBHasStats(prof, r.ix) then
-      table.insert(out, EncodeStats(r, CH.DBSpell(prof, r.ix)))
+    else
+      local needStats = ((r.t and next(r.t)) or (r.l or 0) > 0) and not CH.DBHasStats(prof, r.ix)
+      local needIcon = r.ic and not CH.DBHasIcon(prof, r.ix)
+      if needStats or needIcon then
+        table.insert(out, EncodeStats(r, CH.DBSpell(prof, r.ix), needIcon))
+      end
     end
   end
   return out
@@ -374,7 +379,10 @@ function CH.IsOutdated(name)
   if not o or not o.key then return end
   for prof, k in pairs(o.key) do
     local p = o.profs and o.profs[prof]
-    if not p or p.hash ~= k.hash then return true end
+    if not p then return true end
+    if p.hash ~= k.hash and not (p.mask and k.mask and p.mask == k.mask and (k.unmapped or 0) == 0) then
+      return true
+    end
   end
 end
 
@@ -448,7 +456,7 @@ local function DecodeEntry(e)
   local rec = {
     id = tonumber(f[1]) or 0, q = tonumber(f[2]) or 1, l = tonumber(f[3]) or 0,
     c = f[4] or "Other", t = {}, r = {}, n = f[7] or "?", mk = tonumber(f[8]),
-    sid = tonumber(f[9]),
+    sid = tonumber(f[9]), ic = CH.IconPath(f[10]),
   }
   if rec.mk == 1 then rec.mk = nil end
   local _, _, cat, sl = strfind(rec.c, "^(.-):(.+)$")
@@ -641,6 +649,7 @@ local function Handle(body, from, route)
             if (e.l or 0) > 0 then r.l = e.l end
             if e.q then r.q = e.q end
             if e.c and e.c ~= "" then r.c, r.sl = e.c, e.sl or r.sl end
+            if e.ic then r.ic = e.ic end
           elseif e.n ~= "" and not byName[e.n] then
             table.insert(cur.recipes, e)
           end
@@ -732,17 +741,49 @@ CH.On("CHAT_MSG_WHISPER", function(msg, from)
 end)
 
 -- Hide our whispers in every chat frame, incoming and outgoing
-local origChatFrame_OnEvent = ChatFrame_OnEvent
-function ChatFrame_OnEvent(event)
+-- Returns true if the chat event must be swallowed (our hidden whispers);
+-- otherwise turns [CH:...] codes in arg1 into clickable links.
+function CH.FilterChat(event)
   if (event == "CHAT_MSG_WHISPER" or event == "CHAT_MSG_WHISPER_INFORM") and WhisperBody(arg1) then
-    return
+    return true
   end
-  -- profession links ([CH:...] codes) become clickable
   if arg1 and CH.LinkifyChat and strsub(event or "", 1, 9) == "CHAT_MSG_" then
     arg1 = CH.LinkifyChat(arg1, (event == "CHAT_MSG_WHISPER_INFORM") and CH.player or arg2)
   end
-  return origChatFrame_OnEvent(event)
 end
+
+-- Wraps a global event handler of the form fn(event) (uses arg1/arg2)
+local wrapped = {}
+local function WrapHandler(name)
+  local orig = getglobal(name)
+  if type(orig) ~= "function" or wrapped[orig] then return end
+  local fn = function(event, a, b, c, d, e)
+    if CH.FilterChat(event) then return end
+    return orig(event, a, b, c, d, e)
+  end
+  wrapped[fn] = true
+  setglobal(name, fn)
+end
+CH.WrapHandler = WrapHandler
+
+-- Default chat frames
+WrapHandler("ChatFrame_OnEvent")
+
+-- Whisper addons that handle CHAT_MSG_WHISPER themselves (WIM and the
+-- like) bypass ChatFrame_OnEvent: wrap their handlers too. Done after
+-- all addons are loaded, and again when one is loaded on demand.
+CH.WHISPER_HANDLERS = {
+  "WIM_ChatFrame_OnEvent",        -- WIM (WoW Instant Messenger) 1.12
+  "WIM_ChatFrameSupressor_OnEvent",
+}
+local function WrapAll()
+  for _, name in ipairs(CH.WHISPER_HANDLERS) do WrapHandler(name) end
+  -- someone may have wrapped ChatFrame_OnEvent after us: stay in front
+  WrapHandler("ChatFrame_OnEvent")
+end
+CH.On("PLAYER_LOGIN", WrapAll)
+CH.On("ADDON_LOADED", function() if CH.loggedIn then WrapAll() end end)
+CH.On("PLAYER_ENTERING_WORLD", function() CH.loggedIn = true; WrapAll() end)
 
 -- Nothing is shared or synced automatically: keys go out only when you
 -- press Send / Guild, and data only to players who then ask for it.

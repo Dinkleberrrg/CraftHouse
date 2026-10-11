@@ -5,7 +5,8 @@
      position, and a key is a bit mask over those positions.
 
      data.lua row: { spell, name, item, made, yellow, grey, reagents,
-                     tools, focus, quality, level, category, slot, stats }
+                     tools, focus, quality, level, category, slot, stats,
+                     icon }
 
      Item stats are not in the client files. They come from scans
      (learned into data.lua when it is regenerated) and, at runtime, from
@@ -45,6 +46,29 @@ end
 function CH.DBHasStats(prof, i)
   local row = DB.profs[prof] and DB.profs[prof][i]
   return row and ((row[14] and row[14] ~= "") or (row[11] and row[11] > 0))
+end
+
+-- Icon for a recipe by spell id (also for lists cached before icons existed)
+function CH.DBIcon(prof, sid)
+  local i = bySpell[prof] and bySpell[prof][sid]
+  local row = i and DB.profs[prof][i]
+  return row and CH.IconPath(row[15])
+end
+
+-- true if the local copy has an icon for position i
+function CH.DBHasIcon(prof, i)
+  local row = DB.profs[prof] and DB.profs[prof][i]
+  return row and row[15] and row[15] ~= ""
+end
+
+-- "Interface\Icons\X" <-> "X"
+function CH.IconBase(path)
+  if not path then return "" end
+  return (gsub(path, "^[Ii][Nn][Tt][Ee][Rr][Ff][Aa][Cc][Ee]\\[Ii][Cc][Oo][Nn][Ss]\\", ""))
+end
+function CH.IconPath(base)
+  if not base or base == "" then return end
+  return "Interface\\Icons\\" .. base
 end
 
 function CH.DBItemName(id)
@@ -132,6 +156,7 @@ function CH.DBRecipe(prof, i, rank)
     n = row[2], id = row[3], sid = row[1], ix = i, y = row[5], g = row[6],
     mk = (row[4] > 1) and row[4] or nil, r = {},
     q = row[10] or 1, l = row[11] or 0, c = row[12], sl = row[13], t = ParseStats(row[14]),
+    ic = CH.IconPath(row[15]),
   }
   for _, part in ipairs((CH.Split(row[7], "/"))) do
     local _, _, id, n = strfind(part, "^(%d+)%*(%d+)$")
@@ -186,6 +211,7 @@ function CH.ApplyLearned(rec)
   if (rec.l or 0) == 0 and L.l then rec.l = L.l end
   if (not rec.q or rec.q == 1) and L.q then rec.q = L.q end
   if (not rec.c or rec.c == "Other") and L.c then rec.c = L.c end
+  if not rec.ic and L.ic then rec.ic = L.ic end
 end
 
 -- Reads stats from the tooltip of a cached item (no server query)
@@ -195,11 +221,11 @@ function CH.Learn(rec)
   tried[rec.id] = true
   if not CH.db.learned then CH.db.learned = {} end
   if CH.db.learned[rec.id] then CH.ApplyLearned(rec); return end
-  local name, _, q = GetItemInfo(rec.id)
+  local name, _, q, _, _, _, _, _, tex = GetItemInfo(rec.id)
   if not name then tried[rec.id] = nil; return end
   local tmp = { n = rec.n, c = nil }
   CH.ReadItemTooltip("item:" .. rec.id .. ":0:0:0", tmp)
-  CH.db.learned[rec.id] = { t = tmp.t, l = tmp.l, q = q, c = tmp.c }
+  CH.db.learned[rec.id] = { t = tmp.t, l = tmp.l, q = q, c = tmp.c, ic = tex }
   CH.ApplyLearned(rec)
 end
 
@@ -208,7 +234,7 @@ function CH.LearnFromScan(recipes)
   if not CH.db.learned then CH.db.learned = {} end
   for _, r in ipairs(recipes) do
     if r.id and r.id > 0 and r.t and next(r.t) then
-      CH.db.learned[r.id] = { t = r.t, l = r.l, q = r.q, c = r.c }
+      CH.db.learned[r.id] = { t = r.t, l = r.l, q = r.q, c = r.c, ic = r.ic }
     end
   end
 end
