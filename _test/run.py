@@ -469,6 +469,28 @@ for _, o in ipairs(ALL) do if o.prof == "Tailoring" and o.kind == "Button" and o
 IsShiftKeyDown = function() return false end''')
 check(A.eval('OPENCHAT') == code, "shift-click on the profession tab puts the code into chat")
 
+# WIM: its own whisper handler must not show our hidden whispers, links work
+W = LuaRuntime(unpack_returned_tuples=True)
+W.execute(open(os.path.join(ROOT, "_test", "stubs.lua")).read())
+W.execute('PLAYER = "Wanda"')
+for f in FILES:
+    W.execute(open(os.path.join(ROOT, f), encoding="utf-8").read())
+# WIM loads after CraftHouse (alphabetical) and hooks like the real one
+W.execute('''WIMSHOWN = {}
+function WIM_ChatFrame_OnEvent(event) table.insert(WIMSHOWN, arg1) end
+local orig = ChatFrame_OnEvent
+ChatFrame_OnEvent = function(event) orig(event) end
+Fire("VARIABLES_LOADED"); Fire("PLAYER_LOGIN"); Fire("PLAYER_ENTERING_WORLD")''')
+W.execute('arg1 = "[CH]K^1.7.0^Wanda^p^Tailoring:1:1:x:0"; arg2 = "Henry"; WIM_ChatFrame_OnEvent("CHAT_MSG_WHISPER")')
+W.execute(f'arg1 = {lua_str("can you do " + code)}; arg2 = "Henry"; WIM_ChatFrame_OnEvent("CHAT_MSG_WHISPER")')
+shown = list(W.eval('WIMSHOWN').values())
+check(len(shown) == 1 and "|Hcrafthouse:Henry:Tailoring:" in shown[0], "WIM: hidden whisper swallowed, link code clickable (%s)" % shown)
+W.execute('CHATSHOWN = 0; arg1 = "[CH]K^x"; arg2 = "Henry"; ChatFrame_OnEvent("CHAT_MSG_WHISPER")')
+
+# icons: recipes from the copy carry an icon, unknown ones get a generic one
+A.execute('ICREC = CraftHouse.DBRecipe("Tailoring", CraftHouse.DBMatch("Tailoring", { n = "Lesser Wizard\'s Robe", id = 5766 }), 100)')
+check(A.eval('ICREC.ic') == "Interface\\Icons\\INV_Chest_Cloth_17", "icon from the local copy: %s" % A.eval('ICREC.ic'))
+
 # mask encode/decode roundtrip
 A.execute('''local set = { [1] = true, [6] = true, [7] = true, [300] = true }
 local m = CraftHouse.EncodeMask(set, 324)

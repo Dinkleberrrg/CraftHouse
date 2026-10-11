@@ -15,6 +15,16 @@ sla, _ = load('SkillLineAbility.dbc')
 sp, spn = load('Spell.dbc')
 S = {r[0]: r for r in sp}
 fo, fon = load('SpellFocusObject.dbc')
+si, sin = load('SpellIcon.dbc')
+SPELLICON = {r[0]: sin(r[1]) for r in si}
+ICONS = {}  # item id -> icon basename (from scans / tooltips)
+
+
+def icon_base(path):
+    if not path:
+        return ''
+    return re.sub(r'(?i)^interface[\\/]icons[\\/]', '', path)
+
 FOCUS = {r[0]: fon(r[1]) for r in fo}
 
 # skill id -> profession name as GetTradeSkillLine/GetCraftDisplaySkillLine report it
@@ -57,6 +67,8 @@ if len(sys.argv) > 2:
                 for r in p['recipes'].values():
                     d = {'n': r['n'], 'id': r['id'] or 0, 'q': r['q'], 'l': r['l'], 'c': r['c'],
                          'sl': r['sl'], 't': dict(r['t'].items()) if r['t'] else {}}
+                    if r['ic'] and r['id']:
+                        ICONS.setdefault(int(r['id']), icon_base(r['ic']))
                     for x in (r['r'] or {}).values():
                         if x[3] and x[1]:
                             NAMES.setdefault(int(x[1]), x[3])
@@ -70,6 +82,8 @@ if len(sys.argv) > 2:
                         NAMES.setdefault(int(d['id']), d['n'])
 
         for iid, x in (db['learned'] or {}).items():
+            if x and x['ic']:
+                ICONS.setdefault(int(iid), icon_base(x['ic']))
             if x and x['t']:
                 LEARNED_ITEM[int(iid)] = {'n': '', 'id': int(iid), 'q': x['q'], 'l': x['l'], 'c': x['c'], 'sl': None,
                                           't': dict(x['t'].items())}
@@ -146,11 +160,14 @@ for pname in sorted(profs):
             c = ld['c'] or ''
             sl = ld['sl'] or ''
         tools = ','.join(str(t) for t in rec['tools'])
-        # { spell, name, item, made, yellow, grey, reagents, tools, focus, quality, level, category, slot, stats }
-        lines.append('  {%d,%s,%d,%d,%d,%d,"%s","%s",%s,%s,%s,%s,%s,"%s"},' % (
+        icon = ICONS.get(rec['item'], '') if rec['item'] else icon_base(SPELLICON.get(S[rec['sid']][117], ''))
+        if icon.lower() == 'temp':
+            icon = ''
+        # { spell, name, item, made, yellow, grey, reagents, tools, focus, quality, level, category, slot, stats, icon }
+        lines.append('  {%d,%s,%d,%d,%d,%d,"%s","%s",%s,%s,%s,%s,%s,"%s","%s"},' % (
             rec['sid'], lua_str(rec['name']), rec['item'], rec['made'], rec['yellow'], rec['grey'],
             reag, tools, lua_str(rec['focus']), q if q != '' else 'nil', l if l != '' else 'nil',
-            lua_str(c) if c else 'nil', lua_str(sl) if sl else 'nil', stats))
+            lua_str(c) if c else 'nil', lua_str(sl) if sl else 'nil', stats, icon))
         vsrc.append('%s:%d' % (pname, rec['sid']))
         total += 1
     lines.append('}')
@@ -169,3 +186,4 @@ print('recipes', total, 'professions', {p: len(v) for p, v in profs.items()})
 print('items named', len(used_items) - missing, 'missing names', missing)
 print('with learned stats', sum(1 for l in lines if l.endswith('"},') and not l.endswith(',""},')))
 print('version', ver)
+print('icons', sum(1 for l in lines if l.startswith('  {') and not l.endswith(',""},')))

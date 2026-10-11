@@ -9,6 +9,7 @@ function GetTime() return _now end
 function SetNow(t) _now = t end
 function time() return 1700000000 + math.floor(_now) end
 function getglobal(n) return _G[n] end
+function setglobal(n, v) _G[n] = v end
 OUT = {}
 DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) table.insert(OUT, m) end }
 

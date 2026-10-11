@@ -2,7 +2,7 @@
 
 Run from this folder (Python 3, `pip install lupa` for reading saved variables):
 
-1. `python extract.py Spell.dbc SkillLineAbility.dbc SkillLine.dbc SpellFocusObject.dbc SpellCastTimes.dbc SpellDuration.dbc`
+1. `python extract.py Spell.dbc SkillLineAbility.dbc SkillLine.dbc SpellFocusObject.dbc SpellIcon.dbc SpellCastTimes.dbc SpellDuration.dbc`
    reads the DBCs from the OctoWoW client MPQs (load order dbc, patch, patch-1..5, patch-A..Y).
 2. `python gen_db.py ../data.lua "<WoW>/WTF/Account/<ACCOUNT>/SavedVariables/CraftHouse.lua"`
    writes data.lua: recipes from the DBCs, item names from pfQuest, stats learned from scans.
