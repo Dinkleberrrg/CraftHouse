@@ -202,13 +202,32 @@ local function ItemName(id, fallback)
   return fallback or ("Item #" .. (id or "?"))
 end
 
+-- Generic icons when the real one is unknown (item never seen)
+local SLOTICON = {
+  Head = "INV_Helmet_01", Neck = "INV_Jewelry_Necklace_01", Shoulder = "INV_Shoulder_01",
+  Back = "INV_Misc_Cape_01", Chest = "INV_Chest_Cloth_01", Wrist = "INV_Bracer_01",
+  Hands = "INV_Gauntlets_01", Waist = "INV_Belt_01", Legs = "INV_Pants_01",
+  Feet = "INV_Boots_01", Finger = "INV_Jewelry_Ring_01", Trinket = "INV_Misc_Gear_01",
+  Weapon = "INV_Sword_04", ["Off Hand"] = "INV_Shield_01", Ranged = "INV_Weapon_Bow_01",
+  Bag = "INV_Misc_Bag_09", Health = "INV_Potion_51", Mana = "INV_Potion_72",
+  ["Health + Mana"] = "INV_Potion_25", ["Buff food"] = "INV_Misc_Food_15", Buff = "INV_Potion_32",
+  Bandage = "INV_Misc_Bandage_15", Poison = "Ability_Poisons", Explosive = "INV_Misc_Bomb_08",
+  Material = "INV_Fabric_Wool_02",
+}
+
 local function RecIcon(rec)
   if rec.ic then return rec.ic end
+  if rec.sid and rec.prof then
+    local ic = CH.DBIcon(rec.prof, rec.sid)
+    if ic then return ic end
+  end
   if rec.id and rec.id > 0 then
     local _, _, _, _, _, _, _, _, tex = GetItemInfo(rec.id)
     if tex then return tex end
   end
   if rec.c == "Enchant" then return ENCHANT_ICON end
+  local generic = SLOTICON[rec.c or ""]
+  if generic then return "Interface\\Icons\\" .. generic end
   return QUESTION
 end
 
